@@ -41,7 +41,10 @@ export const TecnihubLogo: React.FC<TecnihubLogoProps> = ({
       {!collapsed && (
         <div className="flex flex-col min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className="font-extrabold tracking-widest text-sm text-white uppercase font-mono" style={{ letterSpacing: '0.14em' }}>
+            <span 
+              className="font-logo-tecnihub font-extrabold text-sm text-white uppercase" 
+              style={{ letterSpacing: '0.12em' }}
+            >
               TECNIHUB
             </span>
             <span className="text-[9px] font-bold uppercase px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">

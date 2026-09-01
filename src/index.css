@@ -3,11 +3,36 @@
 @layer base {
   * {
     border-color: #27272a;
+    font-family: 'Saira', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
-  body {
+  html, body {
     background-color: #09090b;
     color: #f4f4f5;
-    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Saira', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-weight: 350;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  input, textarea, select, button {
+    font-family: 'Saira', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  /* Suavizar pesos muito pesados para a fonte Saira */
+  h1, h2, h3, h4, h5, h6 {
+    font-weight: 600 !important;
+    letter-spacing: -0.01em;
+  }
+  .font-black, .font-extrabold {
+    font-weight: 650 !important;
+  }
+  .font-bold {
+    font-weight: 550 !important;
+  }
+  .font-semibold {
+    font-weight: 500 !important;
+  }
+  .font-medium {
+    font-weight: 450 !important;
   }
 }
 
@@ -33,4 +58,10 @@
 /* Linear-style selection & subtle animations */
 .transition-fast {
   transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Exclusivo para a marcação do logo TECNIHUB */
+.font-logo-tecnihub {
+  font-family: 'Unsteady Oversteer', 'Saira', sans-serif !important;
+  letter-spacing: 0.12em;
 }
