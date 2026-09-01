@@ -430,23 +430,23 @@ export const RecurrencesView: React.FC<RecurrencesViewProps> = ({
                   </div>
 
                   {/* Recurring Subtasks Nested List */}
-                  <div className="space-y-2 pl-2 sm:pl-7">
+                  <div className="space-y-2.5 pl-0 sm:pl-7">
                     <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
                       <Repeat size={12} className="text-emerald-400" />
                       <span>Subtarefas com Recorrência neste Escopo:</span>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-2">
+                    <div className="grid grid-cols-1 gap-2.5">
                       {recurringSubs.map(sub => (
                         <div
                           key={sub.id}
-                          className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-[#171722] border border-emerald-500/20 hover:border-emerald-500/40 transition-colors"
+                          className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 p-3 rounded-xl bg-[#171722] border border-emerald-500/20 hover:border-emerald-500/40 transition-colors"
                         >
-                          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                          <div className="flex items-start gap-2.5 flex-1 min-w-0">
                             {/* Checkbox for current routine cycle */}
                             <button
                               onClick={(e) => handleToggleSubtask(parentTask, sub.id, e)}
-                              className={`w-4 h-4 rounded flex items-center justify-center border transition-colors flex-shrink-0 ${
+                              className={`w-4 h-4 mt-0.5 rounded flex items-center justify-center border transition-colors flex-shrink-0 ${
                                 sub.completed
                                   ? 'bg-emerald-500 border-emerald-500 text-black'
                                   : 'border-zinc-600 bg-zinc-900 hover:border-emerald-400'
@@ -456,40 +456,42 @@ export const RecurrencesView: React.FC<RecurrencesViewProps> = ({
                             </button>
 
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className={`text-xs font-semibold ${sub.completed ? 'line-through text-zinc-500' : 'text-zinc-200'}`}>
-                                  {sub.title}
-                                </span>
+                              <p className={`text-xs font-semibold leading-snug break-words ${sub.completed ? 'line-through text-zinc-500' : 'text-zinc-100'}`}>
+                                {sub.title}
+                              </p>
 
+                              <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold">
-                                  <Repeat size={10} />
+                                  <Repeat size={10} className="flex-shrink-0" />
                                   <span>{sub.recurrenceFrequency}: {sub.recurrenceRule || 'Recorrente'}</span>
                                 </span>
                               </div>
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-3 text-xs flex-shrink-0">
-                            {sub.assigneeName && (
-                              <span className="text-[11px] text-zinc-300 flex items-center gap-1 bg-zinc-800/80 px-2 py-0.5 rounded">
-                                <UserIcon size={11} className="text-zinc-500" />
-                                {sub.assigneeName}
-                              </span>
-                            )}
+                          <div className="flex items-center justify-between sm:justify-end gap-2.5 text-xs pt-2 sm:pt-0 border-t sm:border-t-0 border-zinc-800/60 pl-6 sm:pl-0 flex-wrap sm:flex-nowrap">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {sub.assigneeName && (
+                                <span className="text-[11px] text-zinc-300 flex items-center gap-1 bg-zinc-800/80 px-2 py-0.5 rounded border border-zinc-700/50">
+                                  <UserIcon size={11} className="text-zinc-500" />
+                                  {sub.assigneeName}
+                                </span>
+                              )}
 
-                            {sub.dueDate && (
-                              <span className="text-[11px] font-mono text-zinc-400 flex items-center gap-1">
-                                <Calendar size={11} className="text-zinc-500" />
-                                {sub.dueDate.split('-').reverse().join('/')}
-                              </span>
-                            )}
+                              {sub.dueDate && (
+                                <span className="text-[11px] font-mono text-zinc-400 flex items-center gap-1 bg-zinc-800/50 px-2 py-0.5 rounded border border-zinc-800">
+                                  <Calendar size={11} className="text-zinc-500" />
+                                  {sub.dueDate.split('-').reverse().join('/')}
+                                </span>
+                              )}
+                            </div>
 
                             <button
                               onClick={() => onSelectTask(parentTask)}
-                              className="p-1 rounded text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+                              className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors ml-auto sm:ml-0"
                               title="Abrir tarefa e editar subtarefa"
                             >
-                              <ChevronRight size={14} />
+                              <ChevronRight size={15} />
                             </button>
                           </div>
                         </div>

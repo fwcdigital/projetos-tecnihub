@@ -619,16 +619,18 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
 
                           <div className="flex-1 min-w-0">
                             {/* Title & Recurring Badge */}
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <p className={`text-xs font-medium text-zinc-100 ${sub.completed ? 'line-through text-zinc-500' : ''}`}>
+                            <div>
+                              <p className={`text-xs font-semibold leading-snug break-words text-zinc-100 ${sub.completed ? 'line-through text-zinc-500' : ''}`}>
                                 {sub.title}
                               </p>
 
                               {sub.isRecurring && (
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-semibold whitespace-nowrap">
-                                  <Repeat size={10} className="flex-shrink-0" />
-                                  <span>{sub.recurrenceFrequency}: {sub.recurrenceRule || 'Recorrente'}</span>
-                                </span>
+                                <div className="mt-1">
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-semibold">
+                                    <Repeat size={10} className="flex-shrink-0" />
+                                    <span>{sub.recurrenceFrequency}: {sub.recurrenceRule || 'Recorrente'}</span>
+                                  </span>
+                                </div>
                               )}
                             </div>
 

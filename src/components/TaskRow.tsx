@@ -64,7 +64,7 @@ export const TaskRow: React.FC<TaskRowProps> = ({
   return (
     <div
       onClick={() => onSelectTask(task)}
-      className={`group relative flex flex-col md:flex-row md:items-center justify-between p-2.5 sm:px-3.5 sm:py-2.5 rounded-lg border transition-all cursor-pointer select-none gap-2 md:gap-3 ${
+      className={`group relative flex flex-col md:flex-row md:items-center justify-between p-2.5 sm:px-3.5 sm:py-2.5 rounded-lg border transition-all cursor-pointer select-none gap-2 md:gap-3.5 overflow-hidden ${
         isCompleted 
           ? 'bg-[#101014]/60 border-zinc-800/40 opacity-70 hover:opacity-100' 
           : dueInfo.isOverdue
@@ -73,11 +73,11 @@ export const TaskRow: React.FC<TaskRowProps> = ({
       }`}
     >
       {/* Left section: Checkbox + Priority + Task Title + Client & Project tags */}
-      <div className="flex items-start md:items-center gap-2.5 min-w-0 flex-1">
+      <div className="flex items-center gap-2.5 min-w-0 flex-1 overflow-hidden">
         {/* ClickUp-style Checkbox */}
         <button
           onClick={(e) => onToggleComplete(task.id, e)}
-          className={`w-4 h-4 mt-0.5 md:mt-0 rounded flex-shrink-0 flex items-center justify-center border transition-colors ${
+          className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center border transition-colors ${
             isCompleted 
               ? 'bg-emerald-500 border-emerald-500 text-black' 
               : 'border-zinc-600 hover:border-emerald-400 bg-zinc-900'
@@ -93,9 +93,9 @@ export const TaskRow: React.FC<TaskRowProps> = ({
         </div>
 
         {/* Title and Metadata */}
-        <div className="flex flex-col lg:flex-row lg:items-center gap-1 lg:gap-2.5 min-w-0 flex-1">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-1 lg:gap-2.5 min-w-0 flex-1 overflow-hidden">
           <span 
-            className={`text-xs font-medium text-zinc-100 truncate ${
+            className={`text-xs font-semibold text-zinc-100 truncate flex-shrink min-w-0 ${
               isCompleted ? 'line-through text-zinc-400 font-normal' : ''
             }`}
             title={task.title}
@@ -104,20 +104,20 @@ export const TaskRow: React.FC<TaskRowProps> = ({
           </span>
 
           {/* Client & Project Badges */}
-          <div className="flex items-center gap-1.5 flex-wrap flex-shrink-0">
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-zinc-800/90 text-zinc-300 text-[10px] font-medium border border-zinc-700/60 whitespace-nowrap">
+          <div className="flex items-center gap-1.5 flex-wrap min-w-0 flex-shrink">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-zinc-800/90 text-zinc-300 text-[10px] font-medium border border-zinc-700/60 max-w-[120px] truncate">
               <Building2 size={10} className="text-zinc-400 flex-shrink-0" />
-              <span className="truncate max-w-[110px]">{task.clientName}</span>
+              <span className="truncate">{task.clientName}</span>
             </span>
 
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 text-[10px] font-medium border border-zinc-800 whitespace-nowrap">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 text-[10px] font-medium border border-zinc-800 max-w-[120px] truncate">
               <FolderKanban size={10} className="text-zinc-500 flex-shrink-0" />
-              <span className="truncate max-w-[110px]">{task.projectName}</span>
+              <span className="truncate">{task.projectName}</span>
             </span>
 
             {task.isRecurring && (
               <span 
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-medium whitespace-nowrap"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-medium flex-shrink-0"
                 title={`Recorrência: ${task.recurrenceRule || 'Recorrente'}`}
               >
                 <Repeat size={10} className="flex-shrink-0" />
@@ -129,9 +129,9 @@ export const TaskRow: React.FC<TaskRowProps> = ({
       </div>
 
       {/* Right section: Indicators, Due Date, Assignee, Status, Action Menu */}
-      <div className="flex items-center justify-between md:justify-end gap-2.5 sm:gap-3 flex-shrink-0 pt-1 md:pt-0 border-t md:border-t-0 border-zinc-800/60">
+      <div className="flex items-center justify-between md:justify-end gap-2.5 sm:gap-3 flex-shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-zinc-800/60 min-w-0">
         {/* Indicators (Checklist, Comments, Attachments) */}
-        <div className="flex items-center gap-2 text-zinc-500 text-[11px]">
+        <div className="flex items-center gap-2 text-zinc-500 text-[11px] flex-shrink-0">
           {totalChecklist > 0 && (
             <span 
               className={`flex items-center gap-1 ${
@@ -139,21 +139,21 @@ export const TaskRow: React.FC<TaskRowProps> = ({
               }`}
               title={`Checklist: ${completedChecklist}/${totalChecklist} concluídos`}
             >
-              <CheckSquare size={12} />
+              <CheckSquare size={12} className="flex-shrink-0" />
               <span>{completedChecklist}/{totalChecklist}</span>
             </span>
           )}
 
           {task.comments.length > 0 && (
             <span className="flex items-center gap-1 text-zinc-400" title={`${task.comments.length} comentários`}>
-              <MessageSquare size={12} />
+              <MessageSquare size={12} className="flex-shrink-0" />
               <span>{task.comments.length}</span>
             </span>
           )}
 
           {task.attachments.length > 0 && (
             <span className="flex items-center gap-1 text-zinc-400" title={`${task.attachments.length} arquivos`}>
-              <Paperclip size={12} />
+              <Paperclip size={12} className="flex-shrink-0" />
               <span>{task.attachments.length}</span>
             </span>
           )}
@@ -162,7 +162,7 @@ export const TaskRow: React.FC<TaskRowProps> = ({
         {/* Due Date & Time indicator with intelligent color coding */}
         {showDate && (
           <div 
-            className={`flex items-center gap-1 text-[11px] px-2 py-0.5 rounded font-mono font-medium ${
+            className={`flex items-center gap-1 text-[11px] px-2 py-0.5 rounded font-mono font-medium flex-shrink-0 ${
               dueInfo.isOverdue
                 ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse'
                 : dueInfo.isToday
@@ -174,20 +174,20 @@ export const TaskRow: React.FC<TaskRowProps> = ({
             title={`Prazo: ${task.dueDate} ${task.dueTime || ''}`}
           >
             {dueInfo.isOverdue ? (
-              <AlertTriangle size={11} className="text-rose-400" />
+              <AlertTriangle size={11} className="text-rose-400 flex-shrink-0" />
             ) : (
-              <Clock size={11} />
+              <Clock size={11} className="flex-shrink-0" />
             )}
-            <span>{dueInfo.text}</span>
+            <span className="whitespace-nowrap">{dueInfo.text}</span>
           </div>
         )}
 
         {/* Assignee Avatar & Tooltip */}
-        <div className="flex items-center gap-1.5" title={`Responsável: ${task.assigneeName}`}>
+        <div className="flex items-center gap-1.5 flex-shrink-0" title={`Responsável: ${task.assigneeName}`}>
           <img
             src={task.assigneeAvatar}
             alt={task.assigneeName}
-            className="w-5 h-5 rounded-full object-cover border border-zinc-700"
+            className="w-5 h-5 rounded-full object-cover border border-zinc-700 flex-shrink-0"
           />
           <span className="text-[11px] text-zinc-300 font-medium hidden lg:inline max-w-[80px] truncate">
             {task.assigneeName.split(' ')[0]}
@@ -205,7 +205,7 @@ export const TaskRow: React.FC<TaskRowProps> = ({
             e.stopPropagation();
             onSelectTask(task);
           }}
-          className="p-1 rounded text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition-opacity hidden sm:block"
+          className="p-1 rounded text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition-opacity hidden sm:block flex-shrink-0"
           title="Opções da tarefa"
         >
           <MoreHorizontal size={14} />
