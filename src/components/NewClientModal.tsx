@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { Client, User } from '../types';
-import { X, Building, Phone, Mail, User as UserIcon, Tag } from 'lucide-react';
+import { X, Building, Phone, Mail, User as UserIcon, Tag, Loader2, AlertCircle } from 'lucide-react';
 
 interface NewClientModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAddClient: (newClient: Client) => void;
+  onAddClient: (newClientData: Partial<Client>) => Promise<void> | void;
   users: User[];
   currentUser: User;
 }
@@ -27,41 +27,47 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
   const [leadManagerId, setLeadManagerId] = useState(currentUser.id);
   const [services, setServices] = useState('Google Ads, Meta Ads');
   const [notes, setNotes] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const selectedManager = users.find(u => u.id === leadManagerId) || currentUser;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
+    setError(null);
+    setIsSubmitting(true);
+
     const initials = name
+      .trim()
       .split(' ')
       .slice(0, 2)
       .map(w => w[0])
       .join('')
       .toUpperCase() || 'CL';
 
-    const newClient: Client = {
-      id: `cli-${Date.now()}`,
-      name: name.trim(),
-      company: company.trim() || name.trim(),
-      logo: initials,
-      contactName,
-      contactEmail,
-      contactPhone,
-      activeProjectsCount: 0,
-      completedProjectsCount: 0,
-      leadManagerId: selectedManager.id,
-      leadManagerName: selectedManager.name,
-      teamMembers: [selectedManager.name],
-      statusRelationship: 'ATIVO',
-      notes,
-      monthlyServices: services.split(',').map(s => s.trim()).filter(Boolean),
-      createdAt: '2026-09-01',
-    };
-
-    onAddClient(newClient);
-    onClose();
+    try {
+      await onAddClient({
+        name: name.trim(),
+        company: company.trim() || name.trim(),
+        logo: initials,
+        contactName: contactName.trim(),
+        contactEmail: contactEmail.trim(),
+        contactPhone: contactPhone.trim(),
+        leadManagerId: selectedManager.id,
+        leadManagerName: selectedManager.name,
+        teamMembers: [selectedManager.name],
+        statusRelationship: 'ATIVO',
+        notes: notes.trim(),
+        monthlyServices: services.split(',').map(s => s.trim()).filter(Boolean)
+      });
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Erro ao salvar cliente no banco de dados.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -81,6 +87,13 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
             <X size={18} />
           </button>
         </div>
+
+        {error && (
+          <div className="mx-5 mt-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
+            <AlertCircle size={15} className="shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="p-5 space-y-3.5 text-xs">
           <div>
@@ -138,23 +151,24 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
             </div>
           </div>
 
+          <div>
+            <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
+              E-mail de Notificação / Relatórios
+            </label>
+            <input
+              type="email"
+              placeholder="contato@empresa.com.br"
+              value={contactEmail}
+              onChange={(e) => setContactEmail(e.target.value)}
+              className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-purple-500"
+            />
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
-                E-mail de Contato
-              </label>
-              <input
-                type="email"
-                placeholder="contato@cliente.com.br"
-                value={contactEmail}
-                onChange={(e) => setContactEmail(e.target.value)}
-                className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-purple-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
-                Gestor da Conta
+              <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
+                <UserIcon size={12} className="text-zinc-500" />
+                Gestor da Conta (Líder)
               </label>
               <select
                 value={leadManagerId}
@@ -162,51 +176,61 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
                 className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-purple-500"
               >
                 {users.map(u => (
-                  <option key={u.id} value={u.id}>{u.name}</option>
+                  <option key={u.id} value={u.id}>{u.name} ({u.position})</option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
+                <Tag size={12} className="text-zinc-500" />
+                Serviços Contratados (Tags)
+              </label>
+              <input
+                type="text"
+                placeholder="Google Ads, Meta Ads, SEO"
+                value={services}
+                onChange={(e) => setServices(e.target.value)}
+                className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-purple-500"
+              />
             </div>
           </div>
 
           <div>
             <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
-              Serviços Contratados (Separados por vírgula)
-            </label>
-            <input
-              type="text"
-              placeholder="Ex: Google Ads, Meta Ads, Manutenção Web, SEO"
-              value={services}
-              onChange={(e) => setServices(e.target.value)}
-              className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-purple-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
-              Observações & Instruções do Cliente
+              Observações Estratégicas do Cliente
             </label>
             <textarea
               rows={2}
-              placeholder="Preferências, horários para aprovação, links de drives..."
+              placeholder="Particularidades do nicho, metas de conversão ou acordos..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-purple-500 resize-none"
+              className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-purple-500 resize-none text-xs"
             />
           </div>
 
-          <div className="pt-3 border-t border-zinc-800 flex items-center justify-end gap-2">
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold"
+              disabled={isSubmitting}
+              className="px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold transition-colors disabled:opacity-50"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="px-4 py-2 rounded-lg bg-white text-zinc-950 hover:bg-zinc-100 font-bold shadow-sm"
+              disabled={isSubmitting}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white hover:bg-zinc-100 text-zinc-950 font-bold shadow-sm transition-colors disabled:opacity-50"
             >
-              Cadastrar Cliente
+              {isSubmitting ? (
+                <>
+                  <Loader2 size={14} className="animate-spin text-zinc-900" />
+                  <span>Salvando...</span>
+                </>
+              ) : (
+                <span>Salvar Cliente</span>
+              )}
             </button>
           </div>
         </form>

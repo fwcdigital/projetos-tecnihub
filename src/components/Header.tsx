@@ -19,6 +19,7 @@ interface HeaderProps {
   currentView: NavView;
   subTitle?: string;
   currentUser: User;
+  users?: User[];
   onSelectUser: (user: User) => void;
   onOpenNewTask: () => void;
   onOpenNewProject: () => void;
@@ -35,6 +36,7 @@ export const Header: React.FC<HeaderProps> = ({
   currentView,
   subTitle,
   currentUser,
+  users = [],
   onSelectUser,
   onOpenNewTask,
   onOpenNewProject,
@@ -129,7 +131,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Role Switcher (Hidden or Compact on small screens) */}
         <div className="hidden sm:block">
-          <UserRoleSwitcher currentUser={currentUser} onSelectUser={onSelectUser} />
+          <UserRoleSwitcher currentUser={currentUser} onSelectUser={onSelectUser} availableUsers={users} />
         </div>
 
         {/* Notifications Icon with Badge */}

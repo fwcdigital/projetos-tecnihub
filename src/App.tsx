@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   mockClients, 
   mockProjects, 
@@ -14,6 +14,13 @@ import {
   Task, 
   User 
 } from './types';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { LoginScreen } from './components/LoginScreen';
+import { clientService } from './services/clientService';
+import { projectService } from './services/projectService';
+import { userService } from './services/userService';
+import { taskService } from './services/taskService';
+
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { MobileBottomNav } from './components/MobileBottomNav';
@@ -34,16 +41,20 @@ import { TeamView } from './views/TeamView';
 import { RecurrencesView } from './views/RecurrencesView';
 import { CalendarView } from './views/CalendarView';
 import { ProfileView } from './views/ProfileView';
+import { Loader2 } from 'lucide-react';
 
-export default function App() {
+function MainLayout() {
+  const { user: authUser, isAuthenticated, isLoading: isAuthLoading } = useAuth();
+
   // Navigation & Entity State
   const [currentView, setCurrentView] = useState<NavView>('MEU_TRABALHO');
-  const [currentUser, setCurrentUser] = useState<User>(mockUsers[0]); // Caio Rocha (Gestor)
+  const [currentUser, setCurrentUser] = useState<User | null>(authUser);
   const [tasks, setTasks] = useState<Task[]>(mockTasks);
   const [projects, setProjects] = useState<Project[]>(mockProjects);
   const [clients, setClients] = useState<Client[]>(mockClients);
-  const [users] = useState<User[]>(mockUsers);
+  const [users, setUsers] = useState<User[]>(mockUsers);
   const [notifications, setNotifications] = useState<Notification[]>(mockNotifications);
+  const [isLoadingData, setIsLoadingData] = useState(true);
 
   // Responsive Navigation State
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -51,15 +62,60 @@ export default function App() {
 
   // Selected Entities
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [selectedProject, setSelectedProject] = useState<Project | null>(mockProjects[0]);
-  const [selectedClient, setSelectedClient] = useState<Client | null>(mockClients[0]);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
 
   // Modals & Drawers
   const [isTaskDrawerOpen, setIsTaskDrawerOpen] = useState(false);
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
+  const [newTaskContext, setNewTaskContext] = useState<{ projectId?: string; clientId?: string } | null>(null);
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
   const [isNewClientModalOpen, setIsNewClientModalOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+
+  // Sincronizar currentUser quando authUser mudar
+  useEffect(() => {
+    if (authUser) {
+      setCurrentUser(authUser);
+    }
+  }, [authUser]);
+
+  // Carregar dados reais da API
+  const loadData = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      setIsLoadingData(true);
+      const [fetchedClients, fetchedProjects, fetchedUsers, fetchedTasks] = await Promise.all([
+        clientService.getAll().catch(() => mockClients),
+        projectService.getAll().catch(() => mockProjects),
+        userService.getAll().catch(() => mockUsers),
+        taskService.getAll().catch(() => mockTasks)
+      ]);
+
+      if (fetchedClients && fetchedClients.length > 0) {
+        setClients(fetchedClients);
+        setSelectedClient(fetchedClients[0]);
+      }
+      if (fetchedProjects && fetchedProjects.length > 0) {
+        setProjects(fetchedProjects);
+        setSelectedProject(fetchedProjects[0]);
+      }
+      if (fetchedUsers && fetchedUsers.length > 0) {
+        setUsers(fetchedUsers);
+      }
+      if (fetchedTasks && fetchedTasks.length > 0) {
+        setTasks(fetchedTasks);
+      }
+    } catch (err) {
+      console.error('Erro ao carregar dados do servidor:', err);
+    } finally {
+      setIsLoadingData(false);
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   // Keyboard shortcut for Cmd+K Search
   useEffect(() => {
@@ -79,51 +135,104 @@ export default function App() {
     setIsTaskDrawerOpen(true);
   };
 
-  // Handler: Update Task in state
-  const handleUpdateTask = (updatedTask: Task) => {
+  // Handler: Update Task in backend & state
+  const handleUpdateTask = async (updatedTask: Task) => {
+    // Atualização otimista imediata
     setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
     setSelectedTask(updatedTask);
+
+    try {
+      const persisted = await taskService.update(updatedTask.id, updatedTask);
+      if (persisted) {
+        setTasks(prev => prev.map(t => t.id === persisted.id ? persisted : t));
+        setSelectedTask(persisted);
+      }
+    } catch (err) {
+      console.error('Erro ao persistir atualização de tarefa no backend:', err);
+    }
   };
 
   // Handler: Toggle Task Complete
-  const handleToggleComplete = (taskId: string, e: React.MouseEvent) => {
+  const handleToggleComplete = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setTasks(prev => prev.map(t => {
-      if (t.id === taskId) {
-        const nextStatus = t.status === 'CONCLUIDO' ? 'A_FAZER' : 'CONCLUIDO';
-        return { ...t, status: nextStatus };
-      }
-      return t;
-    }));
+    const currentTask = tasks.find(t => t.id === taskId);
+    if (!currentTask) return;
+
+    const nextStatus = currentTask.status === 'CONCLUIDO' ? 'A_FAZER' : 'CONCLUIDO';
+    const updated = { ...currentTask, status: nextStatus };
+
+    setTasks(prev => prev.map(t => t.id === taskId ? updated : t));
+    if (selectedTask?.id === taskId) {
+      setSelectedTask(updated);
+    }
+
+    try {
+      await taskService.update(taskId, { status: nextStatus });
+    } catch (err) {
+      console.error('Erro ao alternar status da tarefa:', err);
+    }
   };
 
   // Handler: Add New Task
-  const handleAddTask = (newTask: Task) => {
-    setTasks(prev => [newTask, ...prev]);
-    // Notification
+  const handleAddTask = async (newTaskData: Task) => {
+    try {
+      const created = await taskService.create(newTaskData).catch(() => newTaskData);
+      setTasks(prev => [created, ...prev]);
+
+      // Notification
+      const newNotif: Notification = {
+        id: `notif-${Date.now()}`,
+        title: 'Nova Tarefa Criada',
+        message: `A tarefa "${created.title}" foi atribuída a ${created.assigneeName}`,
+        timestamp: 'Agora mesmo',
+        read: false,
+        type: 'TASK'
+      };
+      setNotifications(prev => [newNotif, ...prev]);
+    } catch (err) {
+      console.error('Erro ao criar tarefa:', err);
+    }
+  };
+
+  const handleOpenNewTaskModal = (context?: { projectId?: string; clientId?: string }) => {
+    setNewTaskContext(context || null);
+    setIsNewTaskModalOpen(true);
+  };
+
+  // Handler: Add New Project via Real API
+  const handleAddProject = async (newProjectData: Partial<Project>, teamUserIds: string[]) => {
+    const savedProject = await projectService.create(newProjectData, teamUserIds);
+    setProjects(prev => [savedProject, ...prev]);
+    setSelectedProject(savedProject);
+    setCurrentView('PROJETO_DETALHE');
+
     const newNotif: Notification = {
       id: `notif-${Date.now()}`,
-      title: 'Nova Tarefa Criada',
-      message: `A tarefa "${newTask.title}" foi atribuída a ${newTask.assigneeName}`,
+      title: 'Novo Projeto Criado',
+      message: `O projeto "${savedProject.name}" foi registrado com sucesso.`,
       timestamp: 'Agora mesmo',
       read: false,
-      type: 'TASK'
+      type: 'PROJECT'
     };
     setNotifications(prev => [newNotif, ...prev]);
   };
 
-  // Handler: Add New Project
-  const handleAddProject = (newProject: Project) => {
-    setProjects(prev => [newProject, ...prev]);
-    setSelectedProject(newProject);
-    setCurrentView('PROJETO_DETALHE');
-  };
-
-  // Handler: Add New Client
-  const handleAddClient = (newClient: Client) => {
-    setClients(prev => [newClient, ...prev]);
-    setSelectedClient(newClient);
+  // Handler: Add New Client via Real API
+  const handleAddClient = async (newClientData: Partial<Client>) => {
+    const savedClient = await clientService.create(newClientData);
+    setClients(prev => [savedClient, ...prev]);
+    setSelectedClient(savedClient);
     setCurrentView('CLIENTE_DETALHE');
+
+    const newNotif: Notification = {
+      id: `notif-${Date.now()}`,
+      title: 'Novo Cliente Cadastrado',
+      message: `O cliente "${savedClient.name}" foi registrado com sucesso.`,
+      timestamp: 'Agora mesmo',
+      read: false,
+      type: 'CLIENT'
+    };
+    setNotifications(prev => [newNotif, ...prev]);
   };
 
   // Handler: Navigate to Project Detail
@@ -137,6 +246,21 @@ export default function App() {
     setSelectedClient(client);
     setCurrentView('CLIENTE_DETALHE');
   };
+
+  if (isAuthLoading) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-[#09090b] text-zinc-400">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 size={28} className="animate-spin text-purple-400" />
+          <span className="text-xs font-medium tracking-wider uppercase text-zinc-500">Iniciando Tecnihub...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated || !currentUser) {
+    return <LoginScreen />;
+  }
 
   // Calculate overdue and today counts for badge alerts
   const todayStr = '2026-09-01';
@@ -170,7 +294,8 @@ export default function App() {
         <Header
           currentView={currentView}
           currentUser={currentUser}
-          onSelectUser={setCurrentUser}
+          users={users}
+          onSelectUser={(u) => setCurrentUser(u)}
           onOpenGlobalSearch={() => setIsSearchModalOpen(true)}
           onOpenNewTask={() => setIsNewTaskModalOpen(true)}
           onOpenNewProject={() => setIsNewProjectModalOpen(true)}
@@ -183,7 +308,7 @@ export default function App() {
           }}
         />
 
-        {/* Dynamic Viewport Container (with pb-20 on mobile to not overlap bottom nav) */}
+        {/* Dynamic Viewport Container */}
         <main className="flex-1 overflow-y-auto bg-[#0a0a0e] relative pb-20 md:pb-6">
           {currentView === 'DASHBOARD' && (
             <DashboardView
@@ -230,7 +355,7 @@ export default function App() {
               onBack={() => setCurrentView('PROJETOS')}
               onSelectTask={handleSelectTask}
               onToggleComplete={handleToggleComplete}
-              onOpenNewTask={() => setIsNewTaskModalOpen(true)}
+              onOpenNewTask={() => handleOpenNewTaskModal({ projectId: selectedProject.id, clientId: selectedProject.clientId })}
             />
           )}
 
@@ -253,7 +378,7 @@ export default function App() {
               onSelectProject={handleNavigateProjectDetail}
               onSelectTask={handleSelectTask}
               onToggleComplete={handleToggleComplete}
-              onOpenNewTask={() => setIsNewTaskModalOpen(true)}
+              onOpenNewTask={() => handleOpenNewTaskModal({ clientId: selectedClient.id })}
               onOpenNewProject={() => setIsNewProjectModalOpen(true)}
             />
           )}
@@ -294,19 +419,19 @@ export default function App() {
           {currentView === 'CONFIGURACOES' && (
             <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in">
               <div className="border-b border-zinc-800 pb-4">
-                <h1 className="text-xl sm:text-2xl font-bold text-white">Configurações do Workspace</h1>
-                <p className="text-xs sm:text-sm text-zinc-400 mt-1">Gerencie regras operacionais da agência e integrações.</p>
+                <h1 className="text-xl sm:text-2xl font-bold text-white">Configurações & Fundação do Sistema</h1>
+                <p className="text-xs sm:text-sm text-zinc-400 mt-1">Gerencie a infraestrutura, banco relacional e segurança do Tecnihub.</p>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
-                  <h3 className="text-sm font-semibold text-zinc-200">Alertas de Prazos</h3>
-                  <p className="text-xs text-zinc-400 mt-1">Disparar notificações automáticas quando tarefas atingirem 24h para o prazo.</p>
-                  <span className="inline-block mt-3 px-2 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold rounded">Ativo</span>
+                  <h3 className="text-sm font-semibold text-zinc-200">Banco de Dados Relacional</h3>
+                  <p className="text-xs text-zinc-400 mt-1">Persistência relacional nativa e schema exportável para PostgreSQL / MySQL.</p>
+                  <span className="inline-block mt-3 px-2 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold rounded">Persistência Ativa</span>
                 </div>
                 <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
-                  <h3 className="text-sm font-semibold text-zinc-200">Roteamento SPA & Deploy</h3>
-                  <p className="text-xs text-zinc-400 mt-1">Ambiente Node.js / Express com fallback para roteamento React.</p>
-                  <span className="inline-block mt-3 px-2 py-1 bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[10px] font-bold rounded">Pronto para Hostinger</span>
+                  <h3 className="text-sm font-semibold text-zinc-200">Autenticação & RBAC (JWT)</h3>
+                  <p className="text-xs text-zinc-400 mt-1">Sessões seguras com bcrypt e permissões (Super Admin, Admin, Gestor, Colaborador).</p>
+                  <span className="inline-block mt-3 px-2 py-1 bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[10px] font-bold rounded">Pronto para Produção / VPS</span>
                 </div>
               </div>
             </div>
@@ -316,13 +441,13 @@ export default function App() {
             <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-6 animate-in fade-in">
               <div className="border-b border-zinc-800 pb-4">
                 <h1 className="text-xl sm:text-2xl font-bold text-white">Relatórios & Produtividade</h1>
-                <p className="text-xs sm:text-sm text-zinc-400 mt-1">Visão analítica de entregas, SLA de clientes e gargalos.</p>
+                <p className="text-xs sm:text-sm text-zinc-400 mt-1">Visão analítica de entregas, SLA de clientes e contratos.</p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
-                  <span className="text-xs text-zinc-400">Tarefas Concluídas no Mês</span>
-                  <p className="text-2xl font-black text-emerald-400 mt-1">
-                    {tasks.filter(t => t.status === 'CONCLUIDO').length}
+                  <span className="text-xs text-zinc-400">Total de Clientes Ativos</span>
+                  <p className="text-2xl font-black text-purple-400 mt-1">
+                    {clients.length}
                   </p>
                 </div>
                 <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
@@ -332,8 +457,8 @@ export default function App() {
                   </p>
                 </div>
                 <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
-                  <span className="text-xs text-zinc-400">Taxa de Pontualidade</span>
-                  <p className="text-2xl font-black text-amber-400 mt-1">94.8%</p>
+                  <span className="text-xs text-zinc-400">Total de Projetos Registrados</span>
+                  <p className="text-2xl font-black text-emerald-400 mt-1">{projects.length}</p>
                 </div>
               </div>
             </div>
@@ -350,24 +475,30 @@ export default function App() {
         />
       </div>
 
-      {/* Task Detail Slide-over Drawer (Mobile Optimized) */}
+      {/* Task Detail Slide-over Drawer */}
       <TaskDrawer
         task={selectedTask}
         isOpen={isTaskDrawerOpen}
         onClose={() => setIsTaskDrawerOpen(false)}
         onUpdateTask={handleUpdateTask}
         currentUser={currentUser}
+        users={users}
       />
 
       {/* Creation Modals */}
       <NewTaskModal
         isOpen={isNewTaskModalOpen}
-        onClose={() => setIsNewTaskModalOpen(false)}
+        onClose={() => {
+          setIsNewTaskModalOpen(false);
+          setNewTaskContext(null);
+        }}
         onAddTask={handleAddTask}
         clients={clients}
         projects={projects}
         users={users}
         currentUser={currentUser}
+        defaultProjectId={newTaskContext?.projectId}
+        defaultClientId={newTaskContext?.clientId}
       />
 
       <NewProjectModal
@@ -403,5 +534,13 @@ export default function App() {
         }}
       />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <MainLayout />
+    </AuthProvider>
   );
 }

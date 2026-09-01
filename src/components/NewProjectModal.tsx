@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { Client, Priority, Project, ProjectStatus, ProjectType, User } from '../types';
-import { X, FolderPlus, Building2, User as UserIcon, Calendar, Repeat } from 'lucide-react';
+import { X, FolderPlus, Building2, User as UserIcon, Calendar, Repeat, Loader2, AlertCircle } from 'lucide-react';
 
 interface NewProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAddProject: (newProject: Project) => void;
+  onAddProject: (newProjectData: Partial<Project>, teamUserIds: string[]) => Promise<void> | void;
   clients: Client[];
   users: User[];
   currentUser: User;
@@ -31,7 +31,9 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
   const [dueDate, setDueDate] = useState('2026-10-30');
   const [isRecurring, setIsRecurring] = useState(false);
   const [description, setDescription] = useState('');
-  const [selectedTeam, setSelectedTeam] = useState<string[]>([currentUser.name]);
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([currentUser.id]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const selectedClient = clients.find(c => c.id === clientId) || clients[0];
   const selectedManager = users.find(u => u.id === managerId) || currentUser;
@@ -49,39 +51,45 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
     { value: 'OUTRO', label: 'Outro Serviço' },
   ];
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || !selectedClient) return;
 
-    const newProj: Project = {
-      id: `proj-${Date.now()}`,
-      name: name.trim(),
-      clientId: selectedClient.id,
-      clientName: selectedClient.name,
-      managerId: selectedManager.id,
-      managerName: selectedManager.name,
-      teamMembers: selectedTeam,
-      startDate,
-      dueDate,
-      progress: 0,
-      status,
-      priority,
-      type,
-      isRecurring,
-      description,
-      tasksCount: 0,
-      overdueTasksCount: 0,
-    };
+    setError(null);
+    setIsSubmitting(true);
 
-    onAddProject(newProj);
-    onClose();
+    try {
+      await onAddProject({
+        name: name.trim(),
+        clientId: selectedClient.id,
+        clientName: selectedClient.name,
+        managerId: selectedManager.id,
+        managerName: selectedManager.name,
+        startDate,
+        dueDate,
+        progress: 0,
+        status,
+        priority,
+        type,
+        isRecurring,
+        description: description.trim(),
+        tasksCount: 0,
+        overdueTasksCount: 0,
+      }, selectedUserIds);
+
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Erro ao criar projeto no banco de dados.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const toggleTeamMember = (userName: string) => {
-    if (selectedTeam.includes(userName)) {
-      setSelectedTeam(selectedTeam.filter(t => t !== userName));
+  const toggleTeamMember = (userId: string) => {
+    if (selectedUserIds.includes(userId)) {
+      setSelectedUserIds(selectedUserIds.filter(id => id !== userId));
     } else {
-      setSelectedTeam([...selectedTeam, userName]);
+      setSelectedUserIds([...selectedUserIds, userId]);
     }
   };
 
@@ -103,6 +111,13 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
             <X size={18} />
           </button>
         </div>
+
+        {error && (
+          <div className="mx-5 mt-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
+            <AlertCircle size={15} className="shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4 text-xs flex-1">
@@ -141,7 +156,7 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
 
             <div>
               <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
-                Tipo de Projeto / Serviço *
+                Tipo de Serviço / Entrega
               </label>
               <select
                 value={type}
@@ -155,12 +170,12 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
             </div>
           </div>
 
-          {/* Manager & Team */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Manager & Status & Priority */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
                 <UserIcon size={12} className="text-zinc-500" />
-                Gestor Responsável *
+                Gestor Responsável
               </label>
               <select
                 value={managerId}
@@ -168,7 +183,7 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
                 className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-sky-500"
               >
                 {users.map(u => (
-                  <option key={u.id} value={u.id}>{u.name} ({u.roleTitle})</option>
+                  <option key={u.id} value={u.id}>{u.name} ({u.position})</option>
                 ))}
               </select>
             </div>
@@ -188,76 +203,102 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
                 <option value="AGUARDANDO_CLIENTE">Aguardando Cliente</option>
                 <option value="EM_REVISAO">Em Revisão</option>
                 <option value="PAUSADO">Pausado</option>
+                <option value="CONCLUIDO">Concluído</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
+                Prioridade
+              </label>
+              <select
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as Priority)}
+                className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-sky-500"
+              >
+                <option value="URGENTE">🔥 Urgente</option>
+                <option value="ALTA">⚡ Alta</option>
+                <option value="NORMAL">Normal</option>
+                <option value="BAIXA">Baixa</option>
               </select>
             </div>
           </div>
 
-          {/* Team member selection */}
-          <div>
-            <label className="block text-[11px] font-semibold text-zinc-400 mb-1.5">
-              Equipe Envolvida
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {users.map(u => {
-                const isSelected = selectedTeam.includes(u.name);
-                return (
-                  <button
-                    key={u.id}
-                    type="button"
-                    onClick={() => toggleTeamMember(u.name)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-colors ${
-                      isSelected 
-                        ? 'bg-sky-500/20 text-sky-300 border-sky-500/40' 
-                        : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:border-zinc-700'
-                    }`}
-                  >
-                    <img src={u.avatar} alt={u.name} className="w-4 h-4 rounded-full object-cover" />
-                    <span>{u.name.split(' ')[0]}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Dates & Recurring toggle */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800">
+          {/* Dates & Recurring */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
             <div>
-              <label className="block text-[10px] font-semibold uppercase text-zinc-400 mb-1 flex items-center gap-1">
-                <Calendar size={11} /> Data de Início
+              <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
+                <Calendar size={12} className="text-zinc-500" />
+                Data de Início
               </label>
               <input
                 type="date"
                 value={startDate}
+                onClick={(e) => {
+                  try { (e.target as any).showPicker?.(); } catch {}
+                }}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="w-full bg-[#141419] border border-zinc-700 rounded-lg p-1.5 text-zinc-200 text-xs"
+                className="w-full bg-[#181820] border border-zinc-700 hover:border-zinc-500 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-sky-500 cursor-pointer font-mono"
               />
             </div>
 
             <div>
-              <label className="block text-[10px] font-semibold uppercase text-zinc-400 mb-1 flex items-center gap-1">
-                <Calendar size={11} /> Previsão de Conclusão / Renovação
+              <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
+                <Calendar size={12} className="text-zinc-500" />
+                Prazo Final Previsto
               </label>
               <input
                 type="date"
                 value={dueDate}
+                onClick={(e) => {
+                  try { (e.target as any).showPicker?.(); } catch {}
+                }}
                 onChange={(e) => setDueDate(e.target.value)}
-                className="w-full bg-[#141419] border border-zinc-700 rounded-lg p-1.5 text-zinc-200 text-xs"
+                className="w-full bg-[#181820] border border-zinc-700 hover:border-zinc-500 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-sky-500 cursor-pointer font-mono"
               />
             </div>
 
-            <div className="sm:col-span-2 pt-2 border-t border-zinc-800 flex items-center justify-between">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={isRecurring}
-                  onChange={(e) => setIsRecurring(e.target.checked)}
-                  className="rounded text-sky-500 focus:ring-sky-500 bg-zinc-800 border-zinc-700"
-                />
-                <span className="text-xs font-semibold text-zinc-200 flex items-center gap-1">
-                  <Repeat size={12} className="text-sky-400" />
-                  Projeto Recorrente (Retainer Mensal / Gestão Contínua)
-                </span>
-              </label>
+            <div className="p-2.5 rounded-xl bg-[#181820] border border-zinc-700 flex items-center justify-between">
+              <span className="text-xs text-zinc-300 flex items-center gap-1.5">
+                <Repeat size={13} className="text-purple-400" />
+                Demanda Recorrente?
+              </span>
+              <input
+                type="checkbox"
+                checked={isRecurring}
+                onChange={(e) => setIsRecurring(e.target.checked)}
+                className="w-4 h-4 rounded text-purple-600 focus:ring-0 bg-zinc-800 border-zinc-700"
+              />
+            </div>
+          </div>
+
+          {/* Team Members Selection */}
+          <div>
+            <label className="block text-[11px] font-semibold text-zinc-400 mb-1.5">
+              Membros e Especialistas Alocados ao Projeto
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {users.map(u => {
+                const isSelected = selectedUserIds.includes(u.id);
+                return (
+                  <button
+                    type="button"
+                    key={u.id}
+                    onClick={() => toggleTeamMember(u.id)}
+                    className={`flex items-center gap-2 p-2 rounded-xl border text-left transition-all ${
+                      isSelected 
+                        ? 'bg-sky-500/10 border-sky-500/40 text-sky-200' 
+                        : 'bg-[#181820] border-zinc-700/60 text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    <img src={u.avatar} alt={u.name} className="w-5 h-5 rounded-full object-cover shrink-0" />
+                    <div className="truncate">
+                      <p className="text-[11px] font-medium truncate">{u.name}</p>
+                      <p className="text-[9px] opacity-70 truncate">{u.position}</p>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -267,32 +308,40 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
               Escopo e Objetivos do Projeto
             </label>
             <textarea
-              rows={2}
-              placeholder="Descreva as principais entregas, metas de conversão e tecnologias..."
+              rows={3}
+              placeholder="Descreva o escopo contratado, objetivos de marketing, links de referência..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-zinc-600 resize-none"
+              className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-sky-500 resize-none text-xs"
             />
           </div>
-        </form>
 
-        {/* Footer */}
-        <div className="p-4 border-t border-zinc-800 bg-[#15151a] flex items-center justify-end gap-2 text-xs">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold"
-          >
-            Cancelar
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            className="px-4 py-2 rounded-lg bg-white text-zinc-950 hover:bg-zinc-100 font-bold shadow-sm"
-          >
-            Criar Projeto
-          </button>
-        </div>
+          {/* Buttons */}
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSubmitting}
+              className="px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold transition-colors disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white hover:bg-zinc-100 text-zinc-950 font-bold shadow-sm transition-colors disabled:opacity-50"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 size={14} className="animate-spin text-zinc-900" />
+                  <span>Criando Projeto...</span>
+                </>
+              ) : (
+                <span>Criar Projeto</span>
+              )}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

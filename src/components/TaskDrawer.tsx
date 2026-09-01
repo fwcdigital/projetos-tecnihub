@@ -35,6 +35,7 @@ interface TaskDrawerProps {
   onClose: () => void;
   onUpdateTask: (updated: Task) => void;
   currentUser: User;
+  users?: User[];
 }
 
 export const TaskDrawer: React.FC<TaskDrawerProps> = ({
@@ -42,9 +43,13 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
   isOpen,
   onClose,
   onUpdateTask,
-  currentUser
+  currentUser,
+  users
 }) => {
   if (!isOpen || !task) return null;
+
+  const availableUsers = users && users.length > 0 ? users : mockUsers;
+  const isAdmin = currentUser.role === 'ADMIN_PRINCIPAL' || currentUser.role === 'ADMIN' || (currentUser.role as any) === 'SUPER_ADMIN';
 
   const [activeTab, setActiveTab] = useState<'DETAILS' | 'SUBTASKS' | 'CHECKLIST' | 'COMMENTS' | 'FILES' | 'HISTORY'>('SUBTASKS');
   const [newChecklistTitle, setNewChecklistTitle] = useState('');
@@ -320,14 +325,41 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                 <UserIcon size={13} className="text-zinc-500" />
                 Responsável Principal
               </span>
-              <div className="flex items-center gap-2">
-                <img
-                  src={task.assigneeAvatar}
-                  alt={task.assigneeName}
-                  className="w-5 h-5 rounded-full object-cover border border-zinc-700"
-                />
-                <span className="text-zinc-200 font-medium">{task.assigneeName}</span>
-              </div>
+              {isAdmin ? (
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={task.assigneeId}
+                    onChange={(e) => {
+                      const selected = availableUsers.find(u => u.id === e.target.value);
+                      if (selected) {
+                        onUpdateTask({
+                          ...task,
+                          assigneeId: selected.id,
+                          assigneeName: selected.name,
+                          assigneeAvatar: selected.avatar
+                        });
+                      }
+                    }}
+                    className="bg-zinc-900 border border-emerald-500/50 rounded-md px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-emerald-400 font-medium"
+                    title="Como Administrador, você pode alterar o responsável"
+                  >
+                    {availableUsers.map(u => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} ({u.role === 'ADMIN_PRINCIPAL' ? 'Admin' : u.role === 'GESTOR' ? 'Gestor' : 'Colaborador'})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <img
+                    src={task.assigneeAvatar}
+                    alt={task.assigneeName}
+                    className="w-5 h-5 rounded-full object-cover border border-zinc-700"
+                  />
+                  <span className="text-zinc-200 font-medium">{task.assigneeName}</span>
+                </div>
+              )}
             </div>
 
             {/* Due Date & Time */}
@@ -336,9 +368,22 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                 <Calendar size={13} className="text-zinc-500" />
                 Prazo Final
               </span>
-              <div className="flex items-center gap-1 text-zinc-200 font-mono">
-                <span>{task.dueDate.split('-').reverse().join('/')}</span>
-                {task.dueTime && <span className="text-zinc-400">às {task.dueTime}</span>}
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="date"
+                  value={task.dueDate}
+                  onClick={(e) => {
+                    try { (e.target as any).showPicker?.(); } catch {}
+                  }}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      onUpdateTask({ ...task, dueDate: e.target.value });
+                    }
+                  }}
+                  className="bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded-md px-2 py-0.5 text-zinc-200 font-mono text-xs cursor-pointer focus:outline-none focus:border-emerald-500"
+                  title="Clique para abrir o calendário"
+                />
+                {task.dueTime && <span className="text-zinc-400 text-xs font-mono">{task.dueTime}</span>}
               </div>
             </div>
 
@@ -553,7 +598,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                           onChange={(e) => setSubtaskAssigneeName(e.target.value)}
                           className="w-full bg-[#121216] border border-zinc-700 rounded-md p-1.5 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500"
                         >
-                          {mockUsers.map(u => (
+                          {availableUsers.map(u => (
                             <option key={u.id} value={u.name}>{u.name} ({u.position})</option>
                           ))}
                         </select>
@@ -566,8 +611,11 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                         <input
                           type="date"
                           value={subtaskDueDate}
+                          onClick={(e) => {
+                            try { (e.target as any).showPicker?.(); } catch {}
+                          }}
                           onChange={(e) => setSubtaskDueDate(e.target.value)}
-                          className="w-full bg-[#121216] border border-zinc-700 rounded-md p-1.5 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500"
+                          className="w-full bg-[#121216] border border-zinc-700 rounded-md p-1.5 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500 cursor-pointer"
                         />
                       </div>
 

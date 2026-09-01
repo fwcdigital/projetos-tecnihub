@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Client, Priority, Project, RecurrenceFrequency, Task, TaskStatus, User } from '../types';
-import { X, Check, Plus, Calendar, Clock, Repeat, AlertCircle, Building2, FolderKanban, Trash2 } from 'lucide-react';
+import { X, Check, Plus, Calendar, Clock, Repeat, AlertCircle, Building2, FolderKanban, Trash2, UserCheck } from 'lucide-react';
 
 interface NewTaskModalProps {
   isOpen: boolean;
@@ -10,6 +10,8 @@ interface NewTaskModalProps {
   projects: Project[];
   users: User[];
   currentUser: User;
+  defaultProjectId?: string;
+  defaultClientId?: string;
 }
 
 export const NewTaskModal: React.FC<NewTaskModalProps> = ({
@@ -19,13 +21,23 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
   clients,
   projects,
   users,
-  currentUser
+  currentUser,
+  defaultProjectId,
+  defaultClientId
 }) => {
   if (!isOpen) return null;
 
+  // Determine initial project and client based on defaultProjectId or defaults
+  const initialProject = defaultProjectId 
+    ? projects.find(p => p.id === defaultProjectId) || projects[0]
+    : projects[0];
+
+  const initialClientId = defaultClientId || initialProject?.clientId || clients[0]?.id || '';
+  const initialProjectId = defaultProjectId || initialProject?.id || '';
+
   const [title, setTitle] = useState('');
-  const [clientId, setClientId] = useState(clients[0]?.id || '');
-  const [projectId, setProjectId] = useState(projects[0]?.id || '');
+  const [clientId, setClientId] = useState(initialClientId);
+  const [projectId, setProjectId] = useState(initialProjectId);
   const [assigneeId, setAssigneeId] = useState(currentUser.id);
   const [priority, setPriority] = useState<Priority>('ALTA');
   const [status, setStatus] = useState<TaskStatus>('A_FAZER');
@@ -48,11 +60,31 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
   const [newSubtaskIsRecurring, setNewSubtaskIsRecurring] = useState(false);
   const [newSubtaskFrequency, setNewSubtaskFrequency] = useState<RecurrenceFrequency>('SEMANAL');
   const [newSubtaskRule, setNewSubtaskRule] = useState('Toda segunda-feira');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Sync with default props if they change
+  useEffect(() => {
+    if (defaultProjectId) {
+      setProjectId(defaultProjectId);
+      const proj = projects.find(p => p.id === defaultProjectId);
+      if (proj) {
+        setClientId(proj.clientId);
+      }
+    } else if (defaultClientId) {
+      setClientId(defaultClientId);
+      const firstProj = projects.find(p => p.clientId === defaultClientId);
+      if (firstProj) {
+        setProjectId(firstProj.id);
+      }
+    }
+  }, [defaultProjectId, defaultClientId, projects]);
+
+  const isAdmin = currentUser.role === 'ADMIN_PRINCIPAL' || currentUser.role === 'ADMIN' || (currentUser.role as any) === 'SUPER_ADMIN';
 
   // Filter projects by selected client if applicable
   const clientProjects = projects.filter(p => p.clientId === clientId);
-  const selectedClient = clients.find(c => c.id === clientId);
-  const selectedProject = projects.find(p => p.id === projectId) || projects[0];
+  const selectedClient = clients.find(c => c.id === clientId) || clients[0];
+  const selectedProject = projects.find(p => p.id === projectId) || clientProjects[0] || projects[0];
   const selectedAssignee = users.find(u => u.id === assigneeId) || currentUser;
 
   const handleAddChecklist = () => {
@@ -63,32 +95,43 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
   };
 
   const handleAddSubtask = () => {
-    if (currentSubtaskInput.trim()) {
-      setSubtaskItems([
-        ...subtaskItems, 
-        {
-          title: currentSubtaskInput.trim(),
-          isRecurring: newSubtaskIsRecurring,
-          frequency: newSubtaskIsRecurring ? newSubtaskFrequency : undefined,
-          rule: newSubtaskIsRecurring ? newSubtaskRule : undefined
-        }
-      ]);
-      setCurrentSubtaskInput('');
-      setNewSubtaskIsRecurring(false);
+    if (!currentSubtaskInput.trim()) {
+      return;
     }
+    setSubtaskItems([
+      ...subtaskItems, 
+      {
+        title: currentSubtaskInput.trim(),
+        isRecurring: newSubtaskIsRecurring,
+        frequency: newSubtaskIsRecurring ? newSubtaskFrequency : undefined,
+        rule: newSubtaskIsRecurring ? newSubtaskRule : undefined
+      }
+    ]);
+    setCurrentSubtaskInput('');
+    setNewSubtaskIsRecurring(false);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
+    setErrorMessage(null);
+
+    if (!title.trim()) {
+      setErrorMessage('O nome da tarefa é obrigatório. Por favor, preencha o título.');
+      return;
+    }
+
+    if (!dueDate) {
+      setErrorMessage('O prazo final da tarefa é obrigatório.');
+      return;
+    }
 
     const hasRecurringSubtasks = subtaskItems.some(s => s.isRecurring);
 
     const newTask: Task = {
       id: `task-${Date.now()}`,
       title: title.trim(),
-      clientId: selectedClient?.id || 'cli-1',
-      clientName: selectedClient?.name || 'Cliente',
+      clientId: selectedClient?.id || selectedProject?.clientId || 'cli-1',
+      clientName: selectedClient?.name || selectedProject?.clientName || 'Cliente',
       projectId: selectedProject?.id || 'proj-1',
       projectName: selectedProject?.name || 'Projeto',
       assigneeId: selectedAssignee.id,
@@ -152,6 +195,14 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
           </button>
         </div>
 
+        {/* Validation Error Message */}
+        {errorMessage && (
+          <div className="mx-5 mt-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+            <AlertCircle size={16} className="text-rose-400 flex-shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+        )}
+
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4 text-xs flex-1">
           {/* Title */}
@@ -164,63 +215,94 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
               required
               placeholder="Ex: Criar campanha Performance Max ou Finalizar Home"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2.5 text-zinc-100 text-sm focus:outline-none focus:border-emerald-500 font-medium"
+              onChange={(e) => {
+                setTitle(e.target.value);
+                if (errorMessage) setErrorMessage(null);
+              }}
+              className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2.5 text-zinc-100 text-sm focus:outline-none focus:border-emerald-500 font-medium placeholder-zinc-500"
             />
           </div>
 
-          {/* Client and Project row */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
-                <Building2 size={12} className="text-zinc-500" />
-                Cliente *
-              </label>
-              <select
-                value={clientId}
-                onChange={(e) => {
-                  setClientId(e.target.value);
-                  const firstProj = projects.find(p => p.clientId === e.target.value);
-                  if (firstProj) setProjectId(firstProj.id);
-                }}
-                className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-emerald-500"
-              >
-                {clients.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+          {/* Contextual Project Box OR Client/Project Selectors */}
+          {defaultProjectId ? (
+            /* Context-Aware: Opened directly inside a Project -> Hide redundant client selection */
+            <div className="p-3 rounded-xl bg-zinc-900/70 border border-zinc-800 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 overflow-hidden">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 flex-shrink-0">
+                  <FolderKanban size={15} />
+                </div>
+                <div className="overflow-hidden">
+                  <span className="text-[10px] uppercase font-bold text-zinc-400 block">Projeto Vinculado</span>
+                  <div className="text-xs font-semibold text-white truncate flex items-center gap-2">
+                    <span>{selectedProject?.name}</span>
+                    <span className="text-zinc-500">•</span>
+                    <span className="text-zinc-400 font-normal">{selectedClient?.name}</span>
+                  </div>
+                </div>
+              </div>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 font-medium flex-shrink-0">
+                Contexto Automático
+              </span>
             </div>
+          ) : (
+            /* Global Creation: Select Client and Project */
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
+                  <Building2 size={12} className="text-zinc-500" />
+                  Cliente *
+                </label>
+                <select
+                  value={clientId}
+                  onChange={(e) => {
+                    setClientId(e.target.value);
+                    const firstProj = projects.find(p => p.clientId === e.target.value);
+                    if (firstProj) setProjectId(firstProj.id);
+                  }}
+                  className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-emerald-500"
+                >
+                  {clients.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
 
-            <div>
-              <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
-                <FolderKanban size={12} className="text-zinc-500" />
-                Projeto *
-              </label>
-              <select
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-                className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-emerald-500"
-              >
-                {(clientProjects.length > 0 ? clientProjects : projects).map(p => (
-                  <option key={p.id} value={p.id}>{p.name} ({p.clientName})</option>
-                ))}
-              </select>
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
+                  <FolderKanban size={12} className="text-zinc-500" />
+                  Projeto *
+                </label>
+                <select
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
+                  className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-emerald-500"
+                >
+                  {(clientProjects.length > 0 ? clientProjects : projects).map(p => (
+                    <option key={p.id} value={p.id}>{p.name} ({p.clientName})</option>
+                  ))}
+                </select>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Assignee, Priority, Status */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
+              <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
+                <UserCheck size={12} className="text-zinc-500" />
                 Responsável
               </label>
               <select
                 value={assigneeId}
                 onChange={(e) => setAssigneeId(e.target.value)}
-                className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-emerald-500"
+                disabled={!isAdmin && currentUser.role === 'COLABORADOR'}
+                className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-emerald-500 disabled:opacity-70 disabled:cursor-not-allowed"
+                title={!isAdmin ? 'Apenas administradores podem atribuir tarefas para outros membros' : undefined}
               >
                 {users.map(u => (
-                  <option key={u.id} value={u.id}>{u.name} ({u.position})</option>
+                  <option key={u.id} value={u.id}>
+                    {u.name} ({u.role === 'ADMIN_PRINCIPAL' ? 'Admin' : u.role === 'GESTOR' ? 'Gestor' : 'Colaborador'})
+                  </option>
                 ))}
               </select>
             </div>
@@ -263,38 +345,56 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800">
             <div>
               <label className="block text-[10px] font-semibold uppercase text-zinc-400 mb-1 flex items-center gap-1">
-                <Calendar size={11} /> Data de Início
+                <Calendar size={11} className="text-zinc-500" /> Data de Início
               </label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full bg-[#141419] border border-zinc-700 rounded-lg p-1.5 text-zinc-200 text-xs"
-              />
+              <div className="relative">
+                <input
+                  type="date"
+                  value={startDate}
+                  onClick={(e) => {
+                    try { (e.target as any).showPicker?.(); } catch {}
+                  }}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full bg-[#141419] border border-zinc-700 hover:border-zinc-500 rounded-lg p-2 text-zinc-200 text-xs cursor-pointer focus:outline-none focus:border-emerald-500 font-mono"
+                  title="Clique para abrir o calendário"
+                />
+              </div>
             </div>
 
             <div>
               <label className="block text-[10px] font-semibold uppercase text-zinc-400 mb-1 flex items-center gap-1">
-                <Calendar size={11} /> Prazo Final *
+                <Calendar size={11} className="text-zinc-500" /> Prazo Final *
               </label>
-              <input
-                type="date"
-                required
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                className="w-full bg-[#141419] border border-zinc-700 rounded-lg p-1.5 text-zinc-200 text-xs"
-              />
+              <div className="relative">
+                <input
+                  type="date"
+                  required
+                  value={dueDate}
+                  onClick={(e) => {
+                    try { (e.target as any).showPicker?.(); } catch {}
+                  }}
+                  onChange={(e) => {
+                    setDueDate(e.target.value);
+                    if (errorMessage) setErrorMessage(null);
+                  }}
+                  className="w-full bg-[#141419] border border-zinc-700 hover:border-zinc-500 rounded-lg p-2 text-zinc-200 text-xs cursor-pointer focus:outline-none focus:border-emerald-500 font-mono"
+                  title="Clique para abrir o calendário"
+                />
+              </div>
             </div>
 
             <div>
               <label className="block text-[10px] font-semibold uppercase text-zinc-400 mb-1 flex items-center gap-1">
-                <Clock size={11} /> Horário Previsto
+                <Clock size={11} className="text-zinc-500" /> Horário Previsto
               </label>
               <input
                 type="time"
                 value={dueTime}
+                onClick={(e) => {
+                  try { (e.target as any).showPicker?.(); } catch {}
+                }}
                 onChange={(e) => setDueTime(e.target.value)}
-                className="w-full bg-[#141419] border border-zinc-700 rounded-lg p-1.5 text-zinc-200 text-xs"
+                className="w-full bg-[#141419] border border-zinc-700 hover:border-zinc-500 rounded-lg p-2 text-zinc-200 text-xs cursor-pointer focus:outline-none focus:border-emerald-500 font-mono"
               />
             </div>
 
@@ -498,14 +598,14 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold"
+            className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold transition-colors"
           >
             Cancelar
           </button>
           <button
             type="button"
             onClick={handleSubmit}
-            className="px-4 py-2 rounded-lg bg-white text-zinc-950 hover:bg-zinc-100 font-bold shadow-sm"
+            className="px-4 py-2 rounded-lg bg-white text-zinc-950 hover:bg-zinc-100 font-bold shadow-sm transition-colors"
           >
             Salvar Tarefa
           </button>
