@@ -209,28 +209,28 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
       />
 
       {/* Slide-over Drawer */}
-      <div className="fixed inset-y-0 right-0 max-w-2xl w-full bg-[#111115] border-l border-[#22222a] z-50 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
+      <div className="fixed inset-y-0 right-0 max-w-full sm:max-w-xl md:max-w-2xl w-full bg-[#111115] border-l border-[#22222a] z-50 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
         {/* Drawer Header */}
-        <div className="flex items-center justify-between p-4 border-b border-[#22222a] bg-[#141419]">
-          <div className="flex items-center gap-2 text-xs text-zinc-400">
-            <span className="flex items-center gap-1 font-medium text-zinc-300">
-              <Building2 size={13} className="text-zinc-500" />
-              {task.clientName}
+        <div className="flex items-center justify-between p-3 sm:p-4 border-b border-[#22222a] bg-[#141419]">
+          <div className="flex items-center gap-2 text-xs text-zinc-400 overflow-hidden">
+            <span className="flex items-center gap-1 font-medium text-zinc-300 truncate max-w-[100px] sm:max-w-[140px]">
+              <Building2 size={13} className="text-zinc-500 flex-shrink-0" />
+              <span className="truncate">{task.clientName}</span>
             </span>
             <span>/</span>
-            <span className="flex items-center gap-1 text-zinc-400 truncate max-w-[150px]">
-              <FolderKanban size={13} className="text-zinc-500" />
-              {task.projectName}
+            <span className="flex items-center gap-1 text-zinc-400 truncate max-w-[100px] sm:max-w-[140px]">
+              <FolderKanban size={13} className="text-zinc-500 flex-shrink-0" />
+              <span className="truncate">{task.projectName}</span>
             </span>
-            <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-[10px] text-zinc-400 font-mono">
+            <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-[10px] text-zinc-400 font-mono flex-shrink-0">
               #{task.id}
             </span>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-shrink-0">
             <button
               onClick={copyTaskRef}
-              className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors text-xs flex items-center gap-1"
+              className="p-2 sm:p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors text-xs flex items-center gap-1 min-h-[38px] sm:min-h-0"
               title="Copiar link da tarefa"
             >
               {copiedLink ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
@@ -238,7 +238,8 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
             </button>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+              className="p-2 sm:p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors min-h-[40px] min-w-[40px] flex items-center justify-center"
+              aria-label="Fechar detalhes"
             >
               <X size={18} />
             </button>
@@ -246,15 +247,15 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
         </div>
 
         {/* Drawer Body (Scrollable) */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5 sm:space-y-6">
           {/* Main Title & Complete Toggle */}
           <div className="flex items-start gap-3">
             <button
               onClick={() => handleStatusChange(isCompleted ? 'A_FAZER' : 'CONCLUIDO')}
-              className={`w-6 h-6 rounded-md flex-shrink-0 flex items-center justify-center border transition-colors mt-1 ${
+              className={`w-7 h-7 sm:w-6 sm:h-6 rounded-md flex-shrink-0 flex items-center justify-center border transition-colors mt-0.5 ${
                 isCompleted 
                   ? 'bg-emerald-500 border-emerald-500 text-black' 
-                  : 'border-zinc-600 hover:border-emerald-400 bg-zinc-900'
+                  : 'border-zinc-600 hover:border-emerald-400 bg-zinc-900 active:bg-zinc-800'
               }`}
             >
               {isCompleted && <Check size={16} strokeWidth={3} />}
@@ -265,7 +266,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                 type="text"
                 value={task.title}
                 onChange={(e) => onUpdateTask({ ...task, title: e.target.value })}
-                className={`w-full bg-transparent font-bold text-lg sm:text-xl text-zinc-100 focus:outline-none focus:border-b border-zinc-700 pb-1 ${
+                className={`w-full bg-transparent font-bold text-base sm:text-xl text-zinc-100 focus:outline-none focus:border-b border-zinc-700 pb-1 ${
                   isCompleted ? 'line-through text-zinc-500' : ''
                 }`}
               />
@@ -361,31 +362,31 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
           </div>
 
           {/* Navigation Tabs */}
-          <div className="flex items-center gap-2 border-b border-zinc-800 pb-1 overflow-x-auto text-xs">
+          <div className="flex items-center gap-1.5 border-b border-zinc-800 pb-1 overflow-x-auto text-xs whitespace-nowrap no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
             <button
               onClick={() => setActiveTab('SUBTASKS')}
-              className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors ${
-                activeTab === 'SUBTASKS' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
+              className={`px-3 py-2 sm:py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors flex-shrink-0 min-h-[38px] sm:min-h-0 ${
+                activeTab === 'SUBTASKS' ? 'bg-zinc-800 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               <Repeat size={13} className={recurringSubtasksCount > 0 ? 'text-emerald-400' : ''} />
-              Subtarefas & Recorrências
+              Subtarefas & Rotinas
               <span className="px-1.5 py-0.2 rounded-full bg-zinc-700 text-[10px]">
                 {task.subtasks.length}
               </span>
             </button>
             <button
               onClick={() => setActiveTab('DETAILS')}
-              className={`px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-                activeTab === 'DETAILS' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
+              className={`px-3 py-2 sm:py-1.5 rounded-lg font-semibold transition-colors flex-shrink-0 min-h-[38px] sm:min-h-0 ${
+                activeTab === 'DETAILS' ? 'bg-zinc-800 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               Descrição & Contexto
             </button>
             <button
               onClick={() => setActiveTab('CHECKLIST')}
-              className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors ${
-                activeTab === 'CHECKLIST' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
+              className={`px-3 py-2 sm:py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors flex-shrink-0 min-h-[38px] sm:min-h-0 ${
+                activeTab === 'CHECKLIST' ? 'bg-zinc-800 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               Checklist Geral
@@ -395,8 +396,8 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('COMMENTS')}
-              className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors ${
-                activeTab === 'COMMENTS' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
+              className={`px-3 py-2 sm:py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors flex-shrink-0 min-h-[38px] sm:min-h-0 ${
+                activeTab === 'COMMENTS' ? 'bg-zinc-800 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               Comentários
@@ -406,8 +407,8 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('FILES')}
-              className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors ${
-                activeTab === 'FILES' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
+              className={`px-3 py-2 sm:py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors flex-shrink-0 min-h-[38px] sm:min-h-0 ${
+                activeTab === 'FILES' ? 'bg-zinc-800 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               Arquivos
@@ -417,8 +418,8 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('HISTORY')}
-              className={`px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-                activeTab === 'HISTORY' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
+              className={`px-3 py-2 sm:py-1.5 rounded-lg font-semibold transition-colors flex-shrink-0 min-h-[38px] sm:min-h-0 ${
+                activeTab === 'HISTORY' ? 'bg-zinc-800 text-white shadow-xs' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               Histórico

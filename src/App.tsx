@@ -16,6 +16,7 @@ import {
 } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
+import { MobileBottomNav } from './components/MobileBottomNav';
 import { TaskDrawer } from './components/TaskDrawer';
 import { NewTaskModal } from './components/NewTaskModal';
 import { NewProjectModal } from './components/NewProjectModal';
@@ -43,6 +44,10 @@ export default function App() {
   const [clients, setClients] = useState<Client[]>(mockClients);
   const [users] = useState<User[]>(mockUsers);
   const [notifications, setNotifications] = useState<Notification[]>(mockNotifications);
+
+  // Responsive Navigation State
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   // Selected Entities
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
@@ -133,18 +138,29 @@ export default function App() {
     setCurrentView('CLIENTE_DETALHE');
   };
 
-  // Calculate overdue count for badge alerts
-  const overdueCount = tasks.filter(t => t.dueDate < '2026-09-01' && t.status !== 'CONCLUIDO').length;
+  // Calculate overdue and today counts for badge alerts
+  const todayStr = '2026-09-01';
+  const overdueCount = tasks.filter(t => t.dueDate < todayStr && t.status !== 'CONCLUIDO').length;
+  const todayCount = tasks.filter(t => t.dueDate === todayStr && t.status !== 'CONCLUIDO').length;
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#09090b] text-zinc-100 font-sans antialiased selection:bg-emerald-500/30 selection:text-emerald-300">
-      {/* Left Sidebar Navigation */}
+      {/* Left Sidebar Navigation (Desktop + Mobile Drawer) */}
       <Sidebar
         currentView={currentView}
-        onNavigate={(view) => setCurrentView(view)}
+        onNavigate={(view) => {
+          setCurrentView(view);
+          setIsMobileSidebarOpen(false);
+        }}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(prev => !prev)}
         currentUser={currentUser}
-        onUserChange={setCurrentUser}
         overdueCount={overdueCount}
+        todayCount={todayCount}
+        projectsCount={projects.length}
+        clientsCount={clients.length}
+        isMobileOpen={isMobileSidebarOpen}
+        onCloseMobile={() => setIsMobileSidebarOpen(false)}
         onOpenNewTask={() => setIsNewTaskModalOpen(true)}
       />
 
@@ -154,19 +170,21 @@ export default function App() {
         <Header
           currentView={currentView}
           currentUser={currentUser}
-          onOpenSearch={() => setIsSearchModalOpen(true)}
+          onSelectUser={setCurrentUser}
+          onOpenGlobalSearch={() => setIsSearchModalOpen(true)}
           onOpenNewTask={() => setIsNewTaskModalOpen(true)}
           onOpenNewProject={() => setIsNewProjectModalOpen(true)}
           onOpenNewClient={() => setIsNewClientModalOpen(true)}
-          onNavigate={(view) => setCurrentView(view)}
+          overdueCount={overdueCount}
+          onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
           notifications={notifications}
           onMarkAllNotificationsRead={() => {
             setNotifications(prev => prev.map(n => ({ ...n, read: true })));
           }}
         />
 
-        {/* Dynamic Viewport Container */}
-        <main className="flex-1 overflow-y-auto bg-[#0a0a0e] relative">
+        {/* Dynamic Viewport Container (with pb-20 on mobile to not overlap bottom nav) */}
+        <main className="flex-1 overflow-y-auto bg-[#0a0a0e] relative pb-20 md:pb-6">
           {currentView === 'DASHBOARD' && (
             <DashboardView
               currentUser={currentUser}
@@ -272,10 +290,67 @@ export default function App() {
           {currentView === 'PERFIL' && (
             <ProfileView currentUser={currentUser} />
           )}
+
+          {currentView === 'CONFIGURACOES' && (
+            <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in">
+              <div className="border-b border-zinc-800 pb-4">
+                <h1 className="text-xl sm:text-2xl font-bold text-white">Configurações do Workspace</h1>
+                <p className="text-xs sm:text-sm text-zinc-400 mt-1">Gerencie regras operacionais da agência e integrações.</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
+                  <h3 className="text-sm font-semibold text-zinc-200">Alertas de Prazos</h3>
+                  <p className="text-xs text-zinc-400 mt-1">Disparar notificações automáticas quando tarefas atingirem 24h para o prazo.</p>
+                  <span className="inline-block mt-3 px-2 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold rounded">Ativo</span>
+                </div>
+                <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
+                  <h3 className="text-sm font-semibold text-zinc-200">Roteamento SPA & Deploy</h3>
+                  <p className="text-xs text-zinc-400 mt-1">Ambiente Node.js / Express com fallback para roteamento React.</p>
+                  <span className="inline-block mt-3 px-2 py-1 bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[10px] font-bold rounded">Pronto para Hostinger</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {currentView === 'RELATORIOS' && (
+            <div className="p-4 sm:p-6 max-w-5xl mx-auto space-y-6 animate-in fade-in">
+              <div className="border-b border-zinc-800 pb-4">
+                <h1 className="text-xl sm:text-2xl font-bold text-white">Relatórios & Produtividade</h1>
+                <p className="text-xs sm:text-sm text-zinc-400 mt-1">Visão analítica de entregas, SLA de clientes e gargalos.</p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
+                  <span className="text-xs text-zinc-400">Tarefas Concluídas no Mês</span>
+                  <p className="text-2xl font-black text-emerald-400 mt-1">
+                    {tasks.filter(t => t.status === 'CONCLUIDO').length}
+                  </p>
+                </div>
+                <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
+                  <span className="text-xs text-zinc-400">Projetos em Andamento</span>
+                  <p className="text-2xl font-black text-sky-400 mt-1">
+                    {projects.filter(p => p.status === 'EM_ANDAMENTO').length}
+                  </p>
+                </div>
+                <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
+                  <span className="text-xs text-zinc-400">Taxa de Pontualidade</span>
+                  <p className="text-2xl font-black text-amber-400 mt-1">94.8%</p>
+                </div>
+              </div>
+            </div>
+          )}
         </main>
+
+        {/* Mobile Bottom Quick Navigation Bar */}
+        <MobileBottomNav
+          currentView={currentView}
+          onNavigate={(view) => setCurrentView(view)}
+          onOpenNewMenu={() => setIsNewTaskModalOpen(true)}
+          onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
+          overdueCount={overdueCount}
+        />
       </div>
 
-      {/* Task Detail Slide-over Drawer */}
+      {/* Task Detail Slide-over Drawer (Mobile Optimized) */}
       <TaskDrawer
         task={selectedTask}
         isOpen={isTaskDrawerOpen}
