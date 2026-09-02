@@ -6,8 +6,11 @@ export type NavView =
   | 'CLIENTES'
   | 'CLIENTE_DETALHE'
   | 'EQUIPE'
+  | 'MEMBRO_DETALHE'
   | 'RECORRENCIAS'
   | 'CALENDARIO'
+  | 'RELATORIOS'
+  | 'CONFIGURACOES'
   | 'PERFIL';
 
 export interface Notification {

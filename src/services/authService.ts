@@ -1,5 +1,6 @@
 import { api, setStoredToken, getStoredToken } from './api';
 import { User } from '../types';
+import { formatUserFromBackend } from './userService';
 
 export interface LoginResponse {
   message: string;
@@ -13,7 +14,10 @@ export const authService = {
     if (data.token) {
       setStoredToken(data.token);
     }
-    return data;
+    return {
+      ...data,
+      user: formatUserFromBackend(data.user)
+    };
   },
 
   getCurrentUser: async (): Promise<User | null> => {
@@ -21,7 +25,7 @@ export const authService = {
     if (!token) return null;
     try {
       const data = await api.get<{ user: User }>('/api/auth/me');
-      return data.user;
+      return formatUserFromBackend(data.user);
     } catch {
       setStoredToken(null);
       return null;

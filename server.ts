@@ -1,6 +1,6 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { initDatabase } from './server/db.js';
 import { authRouter } from './server/routes/authRoutes.js';
@@ -10,12 +10,12 @@ import { projectRouter } from './server/routes/projectRoutes.js';
 import { dashboardRouter } from './server/routes/dashboardRoutes.js';
 import { taskRouter } from './server/routes/taskRoutes.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const configuredPort = Number(process.env.PORT);
+  const PORT = Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort <= 65535
+    ? configuredPort
+    : 3000;
 
   // Middlewares essenciais
   app.use(express.json());

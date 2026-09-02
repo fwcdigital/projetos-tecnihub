@@ -22,7 +22,7 @@ interface ProjectsViewProps {
   clients: Client[];
   tasks: Task[];
   onSelectProject: (project: Project) => void;
-  onOpenNewProject: () => void;
+  onOpenNewProject?: () => void;
 }
 
 export const ProjectsView: React.FC<ProjectsViewProps> = ({
@@ -83,13 +83,15 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={onOpenNewProject}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-zinc-950 hover:bg-zinc-100 text-xs font-bold shadow-sm transition-colors self-start sm:self-auto"
-        >
-          <Plus size={14} />
-          <span>+ Novo Projeto</span>
-        </button>
+        {onOpenNewProject && (
+          <button
+            onClick={onOpenNewProject}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-zinc-950 hover:bg-zinc-100 text-xs font-bold shadow-sm transition-colors self-start sm:self-auto"
+          >
+            <Plus size={14} />
+            <span>+ Novo Projeto</span>
+          </button>
+        )}
       </div>
 
       {/* Filter Bar */}

@@ -22,8 +22,8 @@ interface HeaderProps {
   users?: User[];
   onSelectUser: (user: User) => void;
   onOpenNewTask: () => void;
-  onOpenNewProject: () => void;
-  onOpenNewClient: () => void;
+  onOpenNewProject?: () => void;
+  onOpenNewClient?: () => void;
   onOpenNewUser?: () => void;
   onOpenGlobalSearch: () => void;
   overdueCount: number;
@@ -227,33 +227,37 @@ export const Header: React.FC<HeaderProps> = ({
                   </div>
                 </button>
 
-                <button
-                  onClick={() => {
-                    setIsNewMenuOpen(false);
-                    onOpenNewProject();
-                  }}
-                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold text-zinc-200 hover:text-white hover:bg-zinc-800 transition-colors text-left min-h-[44px]"
-                >
-                  <FolderPlus size={16} className="text-sky-400 flex-shrink-0" />
-                  <div>
-                    <p>Novo Projeto</p>
-                    <span className="text-[10px] text-zinc-400 font-normal">Site, Landing Page, etc.</span>
-                  </div>
-                </button>
+                {onOpenNewProject && (
+                  <button
+                    onClick={() => {
+                      setIsNewMenuOpen(false);
+                      onOpenNewProject();
+                    }}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold text-zinc-200 hover:text-white hover:bg-zinc-800 transition-colors text-left min-h-[44px]"
+                  >
+                    <FolderPlus size={16} className="text-sky-400 flex-shrink-0" />
+                    <div>
+                      <p>Novo Projeto</p>
+                      <span className="text-[10px] text-zinc-400 font-normal">Site, Landing Page, etc.</span>
+                    </div>
+                  </button>
+                )}
 
-                <button
-                  onClick={() => {
-                    setIsNewMenuOpen(false);
-                    onOpenNewClient();
-                  }}
-                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold text-zinc-200 hover:text-white hover:bg-zinc-800 transition-colors text-left min-h-[44px]"
-                >
-                  <Building size={16} className="text-purple-400 flex-shrink-0" />
-                  <div>
-                    <p>Novo Cliente</p>
-                    <span className="text-[10px] text-zinc-400 font-normal">Cadastrar nova empresa</span>
-                  </div>
-                </button>
+                {onOpenNewClient && (
+                  <button
+                    onClick={() => {
+                      setIsNewMenuOpen(false);
+                      onOpenNewClient();
+                    }}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold text-zinc-200 hover:text-white hover:bg-zinc-800 transition-colors text-left min-h-[44px]"
+                  >
+                    <Building size={16} className="text-purple-400 flex-shrink-0" />
+                    <div>
+                      <p>Novo Cliente</p>
+                      <span className="text-[10px] text-zinc-400 font-normal">Cadastrar nova empresa</span>
+                    </div>
+                  </button>
+                )}
 
                 {onOpenNewUser && (
                   <button

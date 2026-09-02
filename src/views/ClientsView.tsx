@@ -18,7 +18,7 @@ interface ClientsViewProps {
   projects: Project[];
   tasks: Task[];
   onSelectClient: (client: Client) => void;
-  onOpenNewClient: () => void;
+  onOpenNewClient?: () => void;
 }
 
 export const ClientsView: React.FC<ClientsViewProps> = ({
@@ -56,13 +56,15 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={onOpenNewClient}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-zinc-950 hover:bg-zinc-100 text-xs font-bold shadow-sm transition-colors self-start sm:self-auto"
-        >
-          <Plus size={14} />
-          <span>+ Novo Cliente</span>
-        </button>
+        {onOpenNewClient && (
+          <button
+            onClick={onOpenNewClient}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-zinc-950 hover:bg-zinc-100 text-xs font-bold shadow-sm transition-colors self-start sm:self-auto"
+          >
+            <Plus size={14} />
+            <span>+ Novo Cliente</span>
+          </button>
+        )}
       </div>
 
       {/* Filter Bar */}

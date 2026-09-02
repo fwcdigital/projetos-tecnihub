@@ -14,7 +14,7 @@ clientRouter.get('/', authenticateToken, (req: AuthRequest, res: Response) => {
     });
 
     // Calcular contagens reais de projetos para cada cliente
-    const allProjects = projectRepository.findAll();
+    const allProjects = projectRepository.findAll(req.user);
     const enrichedClients = clients.map(client => {
       const clientProjects = allProjects.filter(p => p.client_id === client.id);
       const activeProjectsCount = clientProjects.filter(p => p.status !== 'COMPLETED' && p.status !== 'CANCELLED').length;

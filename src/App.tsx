@@ -1,11 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { 
-  mockClients, 
-  mockProjects, 
-  mockTasks, 
-  mockUsers, 
-  mockNotifications 
-} from './data/mockData';
+import { mockNotifications } from './data/mockData';
 import { 
   Client, 
   NavView, 
@@ -49,10 +43,10 @@ function MainLayout() {
   // Navigation & Entity State
   const [currentView, setCurrentView] = useState<NavView>('MEU_TRABALHO');
   const [currentUser, setCurrentUser] = useState<User | null>(authUser);
-  const [tasks, setTasks] = useState<Task[]>(mockTasks);
-  const [projects, setProjects] = useState<Project[]>(mockProjects);
-  const [clients, setClients] = useState<Client[]>(mockClients);
-  const [users, setUsers] = useState<User[]>(mockUsers);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>(mockNotifications);
   const [isLoadingData, setIsLoadingData] = useState(true);
 
@@ -86,26 +80,18 @@ function MainLayout() {
     try {
       setIsLoadingData(true);
       const [fetchedClients, fetchedProjects, fetchedUsers, fetchedTasks] = await Promise.all([
-        clientService.getAll().catch(() => mockClients),
-        projectService.getAll().catch(() => mockProjects),
-        userService.getAll().catch(() => mockUsers),
-        taskService.getAll().catch(() => mockTasks)
+        clientService.getAll(),
+        projectService.getAll(),
+        userService.getAll(),
+        taskService.getAll()
       ]);
 
-      if (fetchedClients && fetchedClients.length > 0) {
-        setClients(fetchedClients);
-        setSelectedClient(fetchedClients[0]);
-      }
-      if (fetchedProjects && fetchedProjects.length > 0) {
-        setProjects(fetchedProjects);
-        setSelectedProject(fetchedProjects[0]);
-      }
-      if (fetchedUsers && fetchedUsers.length > 0) {
-        setUsers(fetchedUsers);
-      }
-      if (fetchedTasks && fetchedTasks.length > 0) {
-        setTasks(fetchedTasks);
-      }
+      setClients(fetchedClients);
+      setSelectedClient(fetchedClients[0] || null);
+      setProjects(fetchedProjects);
+      setSelectedProject(fetchedProjects[0] || null);
+      setUsers(fetchedUsers);
+      setTasks(fetchedTasks);
     } catch (err) {
       console.error('Erro ao carregar dados do servidor:', err);
     } finally {
@@ -266,6 +252,7 @@ function MainLayout() {
   const todayStr = '2026-09-01';
   const overdueCount = tasks.filter(t => t.dueDate < todayStr && t.status !== 'CONCLUIDO').length;
   const todayCount = tasks.filter(t => t.dueDate === todayStr && t.status !== 'CONCLUIDO').length;
+  const canManageCoreRecords = currentUser.role !== 'COLABORADOR';
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#09090b] text-zinc-100 font-sans antialiased selection:bg-emerald-500/30 selection:text-emerald-300">
@@ -294,12 +281,12 @@ function MainLayout() {
         <Header
           currentView={currentView}
           currentUser={currentUser}
-          users={users}
-          onSelectUser={(u) => setCurrentUser(u)}
+          users={[currentUser]}
+          onSelectUser={() => undefined}
           onOpenGlobalSearch={() => setIsSearchModalOpen(true)}
           onOpenNewTask={() => setIsNewTaskModalOpen(true)}
-          onOpenNewProject={() => setIsNewProjectModalOpen(true)}
-          onOpenNewClient={() => setIsNewClientModalOpen(true)}
+          onOpenNewProject={canManageCoreRecords ? () => setIsNewProjectModalOpen(true) : undefined}
+          onOpenNewClient={canManageCoreRecords ? () => setIsNewClientModalOpen(true) : undefined}
           overdueCount={overdueCount}
           onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
           notifications={notifications}
@@ -321,7 +308,7 @@ function MainLayout() {
               onToggleComplete={handleToggleComplete}
               onNavigate={(view) => setCurrentView(view)}
               onOpenNewTask={() => setIsNewTaskModalOpen(true)}
-              onOpenNewProject={() => setIsNewProjectModalOpen(true)}
+              onOpenNewProject={canManageCoreRecords ? () => setIsNewProjectModalOpen(true) : undefined}
             />
           )}
 
@@ -344,7 +331,7 @@ function MainLayout() {
               clients={clients}
               tasks={tasks}
               onSelectProject={handleNavigateProjectDetail}
-              onOpenNewProject={() => setIsNewProjectModalOpen(true)}
+              onOpenNewProject={canManageCoreRecords ? () => setIsNewProjectModalOpen(true) : undefined}
             />
           )}
 
@@ -365,7 +352,7 @@ function MainLayout() {
               projects={projects}
               tasks={tasks}
               onSelectClient={handleNavigateClientDetail}
-              onOpenNewClient={() => setIsNewClientModalOpen(true)}
+              onOpenNewClient={canManageCoreRecords ? () => setIsNewClientModalOpen(true) : undefined}
             />
           )}
 
@@ -379,7 +366,7 @@ function MainLayout() {
               onSelectTask={handleSelectTask}
               onToggleComplete={handleToggleComplete}
               onOpenNewTask={() => handleOpenNewTaskModal({ clientId: selectedClient.id })}
-              onOpenNewProject={() => setIsNewProjectModalOpen(true)}
+              onOpenNewProject={canManageCoreRecords ? () => setIsNewProjectModalOpen(true) : undefined}
             />
           )}
 

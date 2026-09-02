@@ -16,22 +16,8 @@ import {
   X
 } from 'lucide-react';
 import { TecnihubLogo } from './TecnihubLogo';
-import { User } from '../types';
-
-export type NavView = 
-  | 'DASHBOARD'
-  | 'MEU_TRABALHO'
-  | 'PROJETOS'
-  | 'PROJETO_DETALHE'
-  | 'CLIENTES'
-  | 'CLIENTE_DETALHE'
-  | 'EQUIPE'
-  | 'MEMBRO_DETALHE'
-  | 'RECORRENCIAS'
-  | 'CALENDARIO'
-  | 'RELATORIOS'
-  | 'CONFIGURACOES'
-  | 'PERFIL';
+import { User, NavView } from '../types';
+export type { NavView } from '../types';
 
 interface SidebarProps {
   currentView: NavView;

@@ -4,6 +4,23 @@ import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 
 export const projectRouter = Router();
 
+const PROJECT_STATUSES: ProjectStatus[] = ['PLANNING', 'WAITING_TO_START', 'IN_PROGRESS', 'WAITING_CLIENT', 'IN_REVIEW', 'PAUSED', 'COMPLETED', 'CANCELLED'];
+const PROJECT_TYPES: ProjectType[] = ['WEBSITE', 'LANDING_PAGE', 'ECOMMERCE', 'GOOGLE_ADS', 'META_ADS', 'SEO', 'SOCIAL_MEDIA', 'MAINTENANCE', 'INTERNAL', 'OTHER'];
+const PRIORITIES: Priority[] = ['URGENT', 'HIGH', 'NORMAL', 'LOW'];
+
+function getInvalidTeamMemberId(teamUserIds: unknown): string | null {
+  if (teamUserIds === undefined) return null;
+  if (!Array.isArray(teamUserIds)) return 'formato-invalido';
+
+  for (const userId of teamUserIds) {
+    if (typeof userId !== 'string') return String(userId);
+    const user = userRepository.findById(userId);
+    if (!user || user.status !== 'ACTIVE') return userId;
+  }
+
+  return null;
+}
+
 // GET /api/projects - Listar projetos respeitando RBAC
 projectRouter.get('/', authenticateToken, (req: AuthRequest, res: Response) => {
   try {
@@ -68,8 +85,27 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
 
     const chosenManagerId = manager_id || req.user?.id;
     const manager = userRepository.findById(chosenManagerId);
-    if (!manager) {
+    if (!manager || manager.status !== 'ACTIVE' || manager.role === 'COLLABORATOR') {
       return res.status(404).json({ error: 'O gestor selecionado não foi encontrado.' });
+    }
+
+    if (req.user?.role === 'PROJECT_MANAGER' && chosenManagerId !== req.user.id) {
+      return res.status(403).json({ error: 'Gestores de projeto só podem criar projetos sob sua própria gestão.' });
+    }
+
+    if (project_type && !PROJECT_TYPES.includes(project_type)) {
+      return res.status(400).json({ error: 'Tipo de projeto inválido.' });
+    }
+    if (status && !PROJECT_STATUSES.includes(status)) {
+      return res.status(400).json({ error: 'Status de projeto inválido.' });
+    }
+    if (priority && !PRIORITIES.includes(priority)) {
+      return res.status(400).json({ error: 'Prioridade de projeto inválida.' });
+    }
+
+    const invalidTeamMemberId = getInvalidTeamMemberId(team_user_ids);
+    if (invalidTeamMemberId) {
+      return res.status(400).json({ error: 'A equipe contém um usuário inválido ou inativo.' });
     }
 
     const newProject = projectRepository.create({
@@ -129,6 +165,36 @@ projectRouter.put('/:id', authenticateToken, (req: AuthRequest, res: Response) =
       is_recurring,
       team_user_ids
     } = req.body;
+
+    if (req.user?.role === 'PROJECT_MANAGER' && manager_id && manager_id !== req.user.id) {
+      return res.status(403).json({ error: 'O gestor do projeto não pode transferir a própria gestão.' });
+    }
+
+    if (client_id && !clientRepository.findById(client_id)) {
+      return res.status(404).json({ error: 'O cliente selecionado não foi encontrado.' });
+    }
+
+    if (manager_id) {
+      const manager = userRepository.findById(manager_id);
+      if (!manager || manager.status !== 'ACTIVE' || manager.role === 'COLLABORATOR') {
+        return res.status(400).json({ error: 'O gestor selecionado é inválido ou está inativo.' });
+      }
+    }
+
+    if (project_type && !PROJECT_TYPES.includes(project_type)) {
+      return res.status(400).json({ error: 'Tipo de projeto inválido.' });
+    }
+    if (status && !PROJECT_STATUSES.includes(status)) {
+      return res.status(400).json({ error: 'Status de projeto inválido.' });
+    }
+    if (priority && !PRIORITIES.includes(priority)) {
+      return res.status(400).json({ error: 'Prioridade de projeto inválida.' });
+    }
+
+    const invalidTeamMemberId = getInvalidTeamMemberId(team_user_ids);
+    if (invalidTeamMemberId) {
+      return res.status(400).json({ error: 'A equipe contém um usuário inválido ou inativo.' });
+    }
 
     const updates: any = {};
     if (name) updates.name = name.trim();

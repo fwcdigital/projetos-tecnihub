@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS projects (
     name VARCHAR(255) NOT NULL,
     description TEXT,
     client_id VARCHAR(64) NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
-    project_type VARCHAR(32) NOT NULL DEFAULT 'SITE' CHECK (project_type IN (
+    project_type VARCHAR(32) NOT NULL DEFAULT 'WEBSITE' CHECK (project_type IN (
         'WEBSITE', 'LANDING_PAGE', 'ECOMMERCE', 'GOOGLE_ADS', 'META_ADS', 
         'SEO', 'SOCIAL_MEDIA', 'MAINTENANCE', 'INTERNAL', 'OTHER'
     )),

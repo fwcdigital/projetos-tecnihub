@@ -15,7 +15,7 @@ const roleMapToBackend: Record<string, string> = {
   COLABORADOR: 'COLLABORATOR'
 };
 
-function formatUserFromBackend(u: any): User {
+export function formatUserFromBackend(u: any): User {
   return {
     id: u.id,
     name: u.name,

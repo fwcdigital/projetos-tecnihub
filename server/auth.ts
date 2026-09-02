@@ -1,8 +1,15 @@
+import 'dotenv/config';
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { userRepository, UserRole } from './db.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'tecnihub_production_secret_key_2026_x87v';
+const configuredJwtSecret = process.env.JWT_SECRET?.trim();
+
+if (!configuredJwtSecret && process.env.NODE_ENV === 'production') {
+  throw new Error('JWT_SECRET é obrigatório em produção.');
+}
+
+const JWT_SECRET = configuredJwtSecret || 'tecnihub_dev_only_secret_change_me';
 
 export interface AuthRequest extends Request {
   user?: {

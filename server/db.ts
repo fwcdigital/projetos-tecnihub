@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
@@ -166,7 +167,9 @@ export interface DatabaseSchema {
   tasks: DbTask[];
 }
 
-const DB_DIR = path.join(process.cwd(), 'data');
+const DB_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DB_DIR, 'app_database.json');
 
 // Memória local sincronizada com arquivo
@@ -179,7 +182,7 @@ let dbData: DatabaseSchema = {
   tasks: []
 };
 
-// Salvar banco no disco com escrita segura
+// Salvar banco no disco e propagar falhas para a rota chamadora.
 function saveDb() {
   try {
     if (!fs.existsSync(DB_DIR)) {
@@ -188,6 +191,7 @@ function saveDb() {
     fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), 'utf-8');
   } catch (error) {
     console.error('Erro ao salvar banco de dados:', error);
+    throw error;
   }
 }
 
@@ -196,7 +200,15 @@ export async function initDatabase(): Promise<void> {
   try {
     if (fs.existsSync(DB_FILE)) {
       const content = fs.readFileSync(DB_FILE, 'utf-8');
-      dbData = JSON.parse(content);
+      const parsed = JSON.parse(content) as Partial<DatabaseSchema>;
+      dbData = {
+        version: typeof parsed.version === 'number' ? parsed.version : 1,
+        users: Array.isArray(parsed.users) ? parsed.users : [],
+        clients: Array.isArray(parsed.clients) ? parsed.clients : [],
+        projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+        project_members: Array.isArray(parsed.project_members) ? parsed.project_members : [],
+        tasks: Array.isArray(parsed.tasks) ? parsed.tasks : []
+      };
       console.log(`[DB] Banco de dados carregado com sucesso (${dbData.users.length} usuários, ${dbData.clients.length} clientes, ${dbData.projects.length} projetos)`);
       return;
     }
@@ -788,16 +800,23 @@ export const projectRepository = {
     const idx = dbData.projects.findIndex(p => p.id === id);
     if (idx === -1) return null;
 
+    const previousManagerId = dbData.projects[idx].manager_id;
+
     dbData.projects[idx] = {
       ...dbData.projects[idx],
       ...updates,
       updated_at: new Date().toISOString()
     };
 
-    if (teamUserIds !== undefined) {
+    if (teamUserIds !== undefined || updates.manager_id !== undefined) {
       // Atualizar membros
       const managerId = updates.manager_id || dbData.projects[idx].manager_id;
-      const allUserIds = Array.from(new Set([managerId, ...teamUserIds]));
+      const retainedTeamUserIds = teamUserIds !== undefined
+        ? teamUserIds
+        : dbData.project_members
+            .filter(pm => pm.project_id === id && pm.user_id !== previousManagerId)
+            .map(pm => pm.user_id);
+      const allUserIds = Array.from(new Set([managerId, ...retainedTeamUserIds]));
 
       // Remover membros antigos do projeto
       dbData.project_members = dbData.project_members.filter(pm => pm.project_id !== id);
