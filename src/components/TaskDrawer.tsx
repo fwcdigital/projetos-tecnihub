@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Task, TaskStatus, Priority, ChecklistItem, Subtask, User, RecurrenceFrequency } from '../types';
+import { Task, TaskStatus, Priority, ChecklistItem, Subtask, User, RecurrenceFrequency, Project } from '../types';
 import { StatusBadge } from './StatusBadge';
 import { PriorityBadge } from './PriorityBadge';
 import { 
@@ -27,15 +27,17 @@ import {
   ChevronUp,
   Tag
 } from 'lucide-react';
-import { mockUsers } from '../data/mockData';
+import { UserAvatar } from './UserAvatar';
 
 interface TaskDrawerProps {
   task: Task | null;
   isOpen: boolean;
   onClose: () => void;
   onUpdateTask: (updated: Task) => void;
+  onDeleteTask: (taskId: string) => Promise<void>;
   currentUser: User;
   users?: User[];
+  projects?: Project[];
 }
 
 export const TaskDrawer: React.FC<TaskDrawerProps> = ({
@@ -43,15 +45,19 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
   isOpen,
   onClose,
   onUpdateTask,
+  onDeleteTask,
   currentUser,
-  users
+  users,
+  projects
 }) => {
   if (!isOpen || !task) return null;
 
-  const availableUsers = users && users.length > 0 ? users : mockUsers;
+  const project = projects?.find(item => item.id === task.projectId);
+  const projectMemberIds = new Set(project?.teamMemberDetails?.map(member => member.id) || []);
   const isAdmin = currentUser.role === 'ADMIN_PRINCIPAL' || currentUser.role === 'ADMIN' || (currentUser.role as any) === 'SUPER_ADMIN';
+  const availableUsers = (users || []).filter(user => user.accountStatus !== 'INACTIVE' && (isAdmin || projectMemberIds.has(user.id)));
 
-  const [activeTab, setActiveTab] = useState<'DETAILS' | 'SUBTASKS' | 'CHECKLIST' | 'COMMENTS' | 'FILES' | 'HISTORY'>('SUBTASKS');
+  const [activeTab, setActiveTab] = useState<'DETAILS' | 'SUBTASKS' | 'CHECKLIST' | 'COMMENTS' | 'FILES' | 'HISTORY'>('DETAILS');
   const [newChecklistTitle, setNewChecklistTitle] = useState('');
   
   // Subtask Form State
@@ -233,6 +239,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
           </div>
 
           <div className="flex items-center gap-1 flex-shrink-0">
+            <button onClick={() => { if (window.confirm(`Excluir a tarefa "${task.title}"?`)) void onDeleteTask(task.id); }} className="p-2 sm:p-1.5 rounded-lg text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10" title="Excluir tarefa"><Trash2 size={14} /></button>
             <button
               onClick={copyTaskRef}
               className="p-2 sm:p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors text-xs flex items-center gap-1 min-h-[38px] sm:min-h-0"
@@ -325,7 +332,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                 <UserIcon size={13} className="text-zinc-500" />
                 Responsável Principal
               </span>
-              {isAdmin ? (
+              {availableUsers.length > 0 ? (
                 <div className="flex items-center gap-1.5">
                   <select
                     value={task.assigneeId}
@@ -341,7 +348,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                       }
                     }}
                     className="bg-zinc-900 border border-emerald-500/50 rounded-md px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-emerald-400 font-medium"
-                    title="Como Administrador, você pode alterar o responsável"
+                    title="Responsáveis disponíveis para este projeto"
                   >
                     {availableUsers.map(u => (
                       <option key={u.id} value={u.id}>
@@ -352,11 +359,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                 </div>
               ) : (
                 <div className="flex items-center gap-2">
-                  <img
-                    src={task.assigneeAvatar}
-                    alt={task.assigneeName}
-                    className="w-5 h-5 rounded-full object-cover border border-zinc-700"
-                  />
+                  <UserAvatar name={task.assigneeName} src={task.assigneeAvatar} className="w-5 h-5" />
                   <span className="text-zinc-200 font-medium">{task.assigneeName}</span>
                 </div>
               )}
@@ -407,7 +410,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
           </div>
 
           {/* Navigation Tabs */}
-          <div className="flex items-center gap-1.5 border-b border-zinc-800 pb-1 overflow-x-auto text-xs whitespace-nowrap no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
+          <div className="flex items-center gap-1.5 border-b border-zinc-800 pb-1 overflow-x-auto text-xs whitespace-nowrap no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 [&>button:not(:nth-child(2))]:hidden">
             <button
               onClick={() => setActiveTab('SUBTASKS')}
               className={`px-3 py-2 sm:py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors flex-shrink-0 min-h-[38px] sm:min-h-0 ${

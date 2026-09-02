@@ -82,7 +82,15 @@ function formatProjectFromBackend(p: any): Project {
     clientName: p.clientName || 'Cliente',
     managerId: p.manager_id || p.managerId,
     managerName: p.managerName || 'Gestor',
+    managerAvatar: p.managerAvatar || '',
     teamMembers: teamMemberNames.length > 0 ? teamMemberNames : [p.managerName || 'Gestor'],
+    teamMemberDetails: Array.isArray(p.teamMembers) ? p.teamMembers.map((member: any) => ({
+      id: member.id,
+      name: member.name,
+      avatar: member.avatar || '',
+      position: member.job_title || member.position || 'Especialista',
+      role: member.role
+    })) : [],
     startDate: p.start_date || p.startDate || '2026-09-01',
     dueDate: p.due_date || p.dueDate || '2026-10-31',
     progress: p.progress || 0,
@@ -91,6 +99,7 @@ function formatProjectFromBackend(p: any): Project {
     type: typeMapToFrontend[p.project_type] || (p.type as ProjectType) || 'SITE',
     isRecurring: Boolean(p.is_recurring ?? p.isRecurring),
     description: p.description || '',
+    briefing: p.briefing && typeof p.briefing === 'object' ? p.briefing : {},
     tasksCount: p.tasksCount || 0,
     overdueTasksCount: p.overdueTasksCount || 0
   };
@@ -137,6 +146,7 @@ export const projectService = {
       due_date: data.dueDate,
       progress: data.progress || 0,
       is_recurring: data.isRecurring || false,
+      briefing: data.briefing || {},
       team_user_ids: teamUserIds
     };
 
@@ -157,6 +167,7 @@ export const projectService = {
     if (data.dueDate !== undefined) payload.due_date = data.dueDate;
     if (data.progress !== undefined) payload.progress = data.progress;
     if (data.isRecurring !== undefined) payload.is_recurring = data.isRecurring;
+    if (data.briefing !== undefined) payload.briefing = data.briefing;
     if (teamUserIds) payload.team_user_ids = teamUserIds;
 
     const res = await api.put<{ project: any }>(`/api/projects/${id}`, payload);

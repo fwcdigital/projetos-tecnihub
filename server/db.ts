@@ -1,10 +1,34 @@
 import 'dotenv/config';
-import fs from 'fs';
-import path from 'path';
-import bcrypt from 'bcryptjs';
+import { PoolClient } from 'pg';
+import { getPool, withTransaction } from './database/connection.js';
+import { listMigrationFiles } from './database/migration-files.js';
 
 export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'PROJECT_MANAGER' | 'COLLABORATOR';
 export type UserStatus = 'ACTIVE' | 'INACTIVE';
+export type ClientStatus = 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+export type ProjectStatus =
+  | 'PLANNING'
+  | 'WAITING_TO_START'
+  | 'IN_PROGRESS'
+  | 'WAITING_CLIENT'
+  | 'IN_REVIEW'
+  | 'PAUSED'
+  | 'COMPLETED'
+  | 'CANCELLED';
+export type ProjectType =
+  | 'WEBSITE'
+  | 'LANDING_PAGE'
+  | 'ECOMMERCE'
+  | 'GOOGLE_ADS'
+  | 'META_ADS'
+  | 'SEO'
+  | 'SOCIAL_MEDIA'
+  | 'MAINTENANCE'
+  | 'INTERNAL'
+  | 'OTHER';
+export type Priority = 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW';
+export type TaskStatus = 'BACKLOG' | 'A_FAZER' | 'EM_ANDAMENTO' | 'AGUARDANDO_CLIENTE' | 'EM_REVISAO' | 'CONCLUIDO' | 'BLOQUEADO';
+export type TaskPriority = 'URGENTE' | 'ALTA' | 'NORMAL' | 'BAIXA';
 
 export interface DbUser {
   id: string;
@@ -19,8 +43,6 @@ export interface DbUser {
   updated_at: string;
 }
 
-export type ClientStatus = 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
-
 export interface DbClient {
   id: string;
   name: string;
@@ -30,51 +52,28 @@ export interface DbClient {
   email: string;
   phone: string;
   status: ClientStatus;
-  lead_manager_id?: string;
-  notes?: string;
-  monthly_services?: string[];
+  lead_manager_id?: string | null;
+  notes: string;
+  monthly_services: string[];
   created_at: string;
   updated_at: string;
 }
 
-export type ProjectStatus = 
-  | 'PLANNING'
-  | 'WAITING_TO_START'
-  | 'IN_PROGRESS'
-  | 'WAITING_CLIENT'
-  | 'IN_REVIEW'
-  | 'PAUSED'
-  | 'COMPLETED'
-  | 'CANCELLED';
-
-export type ProjectType = 
-  | 'WEBSITE'
-  | 'LANDING_PAGE'
-  | 'ECOMMERCE'
-  | 'GOOGLE_ADS'
-  | 'META_ADS'
-  | 'SEO'
-  | 'SOCIAL_MEDIA'
-  | 'MAINTENANCE'
-  | 'INTERNAL'
-  | 'OTHER';
-
-export type Priority = 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW';
-
 export interface DbProject {
   id: string;
   name: string;
-  description?: string;
+  description: string;
+  briefing?: Record<string, string>;
   client_id: string;
   project_type: ProjectType;
   manager_id: string;
   status: ProjectStatus;
   priority: Priority;
-  start_date?: string;
-  due_date?: string;
+  start_date?: string | null;
+  due_date?: string | null;
   progress: number;
   is_recurring: boolean;
-  created_by?: string;
+  created_by?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -87,1006 +86,588 @@ export interface DbProjectMember {
   created_at: string;
 }
 
-export type TaskStatus = 
-  | 'BACKLOG'
-  | 'A_FAZER'
-  | 'EM_ANDAMENTO'
-  | 'AGUARDANDO_CLIENTE'
-  | 'EM_REVISAO'
-  | 'CONCLUIDO'
-  | 'BLOQUEADO';
-
-export type RecurrenceFrequency = 'DIARIO' | 'SEMANAL' | 'QUINZENAL' | 'MENSAL';
-
-export interface DbSubtask {
-  id: string;
-  title: string;
-  completed: boolean;
-  is_recurring?: boolean;
-  recurrence_frequency?: RecurrenceFrequency;
-  recurrence_rule?: string;
-  assignee_name?: string;
-  due_date?: string;
-  due_time?: string;
-}
-
-export interface DbChecklistItem {
-  id: string;
-  title: string;
-  completed: boolean;
-}
-
-export interface DbComment {
-  id: string;
-  user_id: string;
-  user_name: string;
-  user_avatar: string;
-  content: string;
-  created_at: string;
-}
-
-export interface DbHistory {
-  id: string;
-  user: string;
-  action: string;
-  timestamp: string;
-}
-
 export interface DbTask {
   id: string;
-  title: string;
-  description?: string;
-  client_id: string;
   project_id: string;
-  assignee_id: string;
-  participant_ids: string[];
-  priority: Priority;
+  title: string;
+  description: string;
+  responsible_user_id: string;
   status: TaskStatus;
-  start_date?: string;
+  priority: TaskPriority;
+  start_date?: string | null;
   due_date: string;
-  due_time?: string;
-  is_recurring: boolean;
-  recurrence_frequency?: RecurrenceFrequency;
-  recurrence_rule?: string;
-  subtasks: DbSubtask[];
-  checklist: DbChecklistItem[];
-  comments: DbComment[];
-  attachments: string[];
-  history: DbHistory[];
+  due_time?: string | null;
+  completed_at?: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
 }
 
-export interface DatabaseSchema {
-  version: number;
-  users: DbUser[];
-  clients: DbClient[];
-  projects: DbProject[];
-  project_members: DbProjectMember[];
-  tasks: DbTask[];
+export interface AuthScope {
+  id: string;
+  role: UserRole;
 }
 
-const DB_DIR = process.env.DATA_DIR
-  ? path.resolve(process.env.DATA_DIR)
-  : path.join(process.cwd(), 'data');
-const DB_FILE = path.join(DB_DIR, 'app_database.json');
+type SafeUser = Omit<DbUser, 'password_hash'>;
 
-// Memória local sincronizada com arquivo
-let dbData: DatabaseSchema = {
-  version: 1,
-  users: [],
-  clients: [],
-  projects: [],
-  project_members: [],
-  tasks: []
-};
+function toIsoString(value: unknown): string {
+  return value instanceof Date ? value.toISOString() : String(value ?? '');
+}
 
-// Salvar banco no disco e propagar falhas para a rota chamadora.
-function saveDb() {
-  try {
-    if (!fs.existsSync(DB_DIR)) {
-      fs.mkdirSync(DB_DIR, { recursive: true });
-    }
-    fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), 'utf-8');
-  } catch (error) {
-    console.error('Erro ao salvar banco de dados:', error);
-    throw error;
+function toDateString(value: unknown): string {
+  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value ?? '');
+}
+
+function normalizeUser(row: any): DbUser {
+  return {
+    ...row,
+    created_at: toIsoString(row.created_at),
+    updated_at: toIsoString(row.updated_at)
+  } as DbUser;
+}
+
+function toSafeUser(row: any): SafeUser {
+  const { password_hash: _passwordHash, ...safeUser } = normalizeUser(row);
+  return safeUser;
+}
+
+function normalizeClient(row: any): DbClient {
+  return {
+    ...row,
+    monthly_services: Array.isArray(row.monthly_services) ? row.monthly_services : [],
+    created_at: toIsoString(row.created_at),
+    updated_at: toIsoString(row.updated_at)
+  } as DbClient;
+}
+
+function normalizeProject(row: any): DbProject {
+  return {
+    ...row,
+    briefing: row.briefing && typeof row.briefing === 'object' ? row.briefing : {},
+    start_date: row.start_date ? toDateString(row.start_date) : null,
+    due_date: row.due_date ? toDateString(row.due_date) : null,
+    created_at: toIsoString(row.created_at),
+    updated_at: toIsoString(row.updated_at)
+  } as DbProject;
+}
+
+function addRestrictedProjectAccess(where: string[], values: unknown[], user?: AuthScope, alias = 'p'): void {
+  if (!user || user.role === 'SUPER_ADMIN' || user.role === 'ADMIN') return;
+  values.push(user.id);
+  const userParam = `$${values.length}`;
+  if (user.role === 'PROJECT_MANAGER') {
+    where.push(`(
+      ${alias}.manager_id = ${userParam}
+      OR EXISTS (
+        SELECT 1 FROM project_members access_pm
+        WHERE access_pm.project_id = ${alias}.id AND access_pm.user_id = ${userParam}
+      )
+    )`);
+  } else {
+    where.push(`EXISTS (
+      SELECT 1 FROM project_members access_pm
+      WHERE access_pm.project_id = ${alias}.id AND access_pm.user_id = ${userParam}
+    )`);
   }
 }
 
-// Inicialização com Seed
-export async function initDatabase(): Promise<void> {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      const content = fs.readFileSync(DB_FILE, 'utf-8');
-      const parsed = JSON.parse(content) as Partial<DatabaseSchema>;
-      dbData = {
-        version: typeof parsed.version === 'number' ? parsed.version : 1,
-        users: Array.isArray(parsed.users) ? parsed.users : [],
-        clients: Array.isArray(parsed.clients) ? parsed.clients : [],
-        projects: Array.isArray(parsed.projects) ? parsed.projects : [],
-        project_members: Array.isArray(parsed.project_members) ? parsed.project_members : [],
-        tasks: Array.isArray(parsed.tasks) ? parsed.tasks : []
-      };
-      console.log(`[DB] Banco de dados carregado com sucesso (${dbData.users.length} usuários, ${dbData.clients.length} clientes, ${dbData.projects.length} projetos)`);
-      return;
-    }
-  } catch (err) {
-    console.warn('[DB] Erro ao ler arquivo do banco, recriando com seed inicial:', err);
-  }
+async function enrichProjects(rows: any[]): Promise<any[]> {
+  if (rows.length === 0) return [];
 
-  console.log('[DB] Inicializando banco de dados com seed de teste...');
-  const salt = bcrypt.genSaltSync(10);
-  const defaultPasswordHash = bcrypt.hashSync('Admin@123', salt);
+  const projectIds = rows.map(row => row.id);
+  const membersResult = await getPool().query(
+    `SELECT pm.project_id, u.id, u.name, u.avatar, u.job_title, u.role
+     FROM project_members pm
+     INNER JOIN users u ON u.id = pm.user_id
+     WHERE pm.project_id = ANY($1::uuid[])
+     ORDER BY CASE pm.member_role WHEN 'MANAGER' THEN 0 ELSE 1 END, u.name`,
+    [projectIds]
+  );
 
-  const initialUsers: DbUser[] = [
-    {
-      id: 'usr-superadmin',
-      name: 'Administrador Principal',
-      email: 'admin@tecnihub.com',
-      password_hash: defaultPasswordHash,
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-      role: 'SUPER_ADMIN',
-      job_title: 'Diretor de Operações',
-      status: 'ACTIVE',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    },
-    {
-      id: 'usr-admin-1',
-      name: 'Mariana Duarte',
-      email: 'mariana@tecnihub.com',
-      password_hash: defaultPasswordHash,
-      avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
-      role: 'ADMIN',
-      job_title: 'Gerente Geral da Agência',
-      status: 'ACTIVE',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    },
-    {
-      id: 'usr-gestor-1',
-      name: 'Caio Rocha',
-      email: 'caio@tecnihub.com',
-      password_hash: defaultPasswordHash,
-      avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-      role: 'PROJECT_MANAGER',
-      job_title: 'Gestor de Contas & Mídia',
-      status: 'ACTIVE',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    },
-    {
-      id: 'usr-colab-1',
-      name: 'Lucas Mendes',
-      email: 'lucas@tecnihub.com',
-      password_hash: defaultPasswordHash,
-      avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
-      role: 'COLLABORATOR',
-      job_title: 'Desenvolvedor Frontend & WordPress',
-      status: 'ACTIVE',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    },
-    {
-      id: 'usr-colab-2',
-      name: 'Beatriz Lima',
-      email: 'beatriz@tecnihub.com',
-      password_hash: defaultPasswordHash,
-      avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&auto=format&fit=crop&q=80',
-      role: 'COLLABORATOR',
-      job_title: 'Designer UI/UX & Criativos',
-      status: 'ACTIVE',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }
-  ];
-
-  const initialClients: DbClient[] = [
-    {
-      id: 'cli-1',
-      name: 'Clínica Horizonte',
-      company_name: 'Horizonte Medicina Integrada Ltda',
-      logo: 'CH',
-      contact_name: 'Dra. Roberta Santos',
-      email: 'roberta@clinicahorizonte.med.br',
-      phone: '(11) 98765-4321',
-      status: 'ACTIVE',
-      lead_manager_id: 'usr-gestor-1',
-      notes: 'Cliente de saúde com foco em agendamentos de consultas via Google Ads e captação local.',
-      monthly_services: ['Google Ads', 'Meta Ads', 'Landing Page'],
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    },
-    {
-      id: 'cli-2',
-      name: 'Indústria Atlas',
-      company_name: 'Atlas Manufatura e Equipamentos S/A',
-      logo: 'IA',
-      contact_name: 'Ricardo Silveira',
-      email: 'ricardo@industriaatlas.com.br',
-      phone: '(19) 99887-1122',
-      status: 'ACTIVE',
-      lead_manager_id: 'usr-gestor-1',
-      notes: 'Indústria B2B contratante de portal institucional e campanhas institucionais.',
-      monthly_services: ['Manutenção Web', 'SEO Estratégico'],
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    },
-    {
-      id: 'cli-3',
-      name: 'Imobiliária Prime',
-      company_name: 'Prime Negócios Imobiliários',
-      logo: 'IP',
-      contact_name: 'Fernanda Martins',
-      email: 'contato@imobprime.com.br',
-      phone: '(21) 97654-3210',
-      status: 'ACTIVE',
-      lead_manager_id: 'usr-admin-1',
-      notes: 'Imóveis de alto padrão e lançamentos residenciais.',
-      monthly_services: ['Meta Ads', 'Criação de Conteúdo'],
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }
-  ];
-
-  const initialProjects: DbProject[] = [
-    {
-      id: 'proj-1',
-      name: 'Gestão Google Ads Q4',
-      description: 'Estruturação de campanhas de pesquisa, display e performance max para captação de pacientes.',
-      client_id: 'cli-1',
-      project_type: 'GOOGLE_ADS',
-      manager_id: 'usr-gestor-1',
-      status: 'IN_PROGRESS',
-      priority: 'HIGH',
-      start_date: '2026-09-01',
-      due_date: '2026-10-31',
-      progress: 0,
-      is_recurring: true,
-      created_by: 'usr-superadmin',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    },
-    {
-      id: 'proj-2',
-      name: 'Manutenção WordPress & Otimização',
-      description: 'Atualizações técnicas periódicas, segurança, velocidade de carregamento e backup mensal.',
-      client_id: 'cli-2',
-      project_type: 'MAINTENANCE',
-      manager_id: 'usr-gestor-1',
-      status: 'IN_PROGRESS',
-      priority: 'NORMAL',
-      start_date: '2026-08-15',
-      due_date: '2026-11-30',
-      progress: 0,
-      is_recurring: true,
-      created_by: 'usr-superadmin',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    },
-    {
-      id: 'proj-3',
-      name: 'Novo Site Institucional Responsivo',
-      description: 'Redesenho completo do portal de imóveis com integração ao CRM imobiliário.',
-      client_id: 'cli-3',
-      project_type: 'WEBSITE',
-      manager_id: 'usr-admin-1',
-      status: 'PLANNING',
-      priority: 'URGENT',
-      start_date: '2026-09-05',
-      due_date: '2026-10-15',
-      progress: 0,
-      is_recurring: false,
-      created_by: 'usr-superadmin',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }
-  ];
-
-  const initialMembers: DbProjectMember[] = [
-    {
-      id: 'pm-1',
-      project_id: 'proj-1',
-      user_id: 'usr-gestor-1',
-      member_role: 'MANAGER',
-      created_at: new Date().toISOString()
-    },
-    {
-      id: 'pm-2',
-      project_id: 'proj-1',
-      user_id: 'usr-colab-1',
-      member_role: 'COLLABORATOR',
-      created_at: new Date().toISOString()
-    },
-    {
-      id: 'pm-3',
-      project_id: 'proj-2',
-      user_id: 'usr-gestor-1',
-      member_role: 'MANAGER',
-      created_at: new Date().toISOString()
-    },
-    {
-      id: 'pm-4',
-      project_id: 'proj-2',
-      user_id: 'usr-colab-1',
-      member_role: 'COLLABORATOR',
-      created_at: new Date().toISOString()
-    },
-    {
-      id: 'pm-5',
-      project_id: 'proj-3',
-      user_id: 'usr-admin-1',
-      member_role: 'MANAGER',
-      created_at: new Date().toISOString()
-    },
-    {
-      id: 'pm-6',
-      project_id: 'proj-3',
-      user_id: 'usr-colab-2',
-      member_role: 'COLLABORATOR',
-      created_at: new Date().toISOString()
-    }
-  ];
-
-  const initialTasks: DbTask[] = [
-    {
-      id: 'task-1',
-      title: 'Otimização Semanal de Palavras-Chave Negativas',
-      description: 'Análise de termos de busca da semana anterior, exclusão de tráfego desqualificado e refinamento de correspondências.',
-      client_id: 'cli-1',
-      project_id: 'proj-1',
-      assignee_id: 'usr-gestor-1',
-      participant_ids: ['usr-gestor-1'],
-      priority: 'HIGH',
-      status: 'A_FAZER',
-      start_date: '2026-09-01',
-      due_date: '2026-09-01',
-      due_time: '11:00',
-      is_recurring: true,
-      recurrence_frequency: 'SEMANAL',
-      recurrence_rule: 'Toda terça-feira às 11:00',
-      subtasks: [
-        {
-          id: 'sub-1-1',
-          title: 'Extrair relatório de termos de pesquisa da última semana',
-          completed: false,
-          is_recurring: true,
-          recurrence_frequency: 'SEMANAL',
-          recurrence_rule: 'Toda terça',
-          assignee_name: 'Caio Rocha',
-          due_date: '2026-09-01',
-          due_time: '10:00'
-        },
-        {
-          id: 'sub-1-2',
-          title: 'Adicionar termos desqualificados à lista de negativas da conta',
-          completed: false,
-          is_recurring: true,
-          recurrence_frequency: 'SEMANAL',
-          recurrence_rule: 'Toda terça',
-          assignee_name: 'Caio Rocha',
-          due_date: '2026-09-01',
-          due_time: '11:00'
-        }
-      ],
-      checklist: [
-        { id: 'chk-1', title: 'Verificar custo médio por clique (CPC)', completed: false },
-        { id: 'chk-2', title: 'Validar conversões registradas no Google Analytics', completed: false }
-      ],
-      comments: [
-        {
-          id: 'c-1',
-          user_id: 'usr-admin-1',
-          user_name: 'Mariana Duarte',
-          user_avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
-          content: 'Lembre-se de checar as novas campanhas de implante dentário.',
-          created_at: 'Há 1 hora'
-        }
-      ],
-      attachments: [],
-      history: [
-        { id: 'h-1', user: 'Caio Rocha', action: 'Criou a rotina semanal', timestamp: '2026-09-01 08:00' }
-      ],
-      created_by: 'Caio Rocha',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    },
-    {
-      id: 'task-2',
-      title: 'Ajuste de Lance por Dispositivo & Geolocalização',
-      description: 'Refinar os lances para mobile no raio de 15km da clínica para maximizar ligações telefônicas.',
-      client_id: 'cli-1',
-      project_id: 'proj-1',
-      assignee_id: 'usr-colab-1',
-      participant_ids: ['usr-colab-1'],
-      priority: 'NORMAL',
-      status: 'EM_ANDAMENTO',
-      start_date: '2026-09-01',
-      due_date: '2026-09-02',
-      due_time: '16:00',
-      is_recurring: false,
-      subtasks: [],
-      checklist: [],
-      comments: [],
-      attachments: [],
-      history: [],
-      created_by: 'Caio Rocha',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    },
-    {
-      id: 'task-3',
-      title: 'Backup Completo do Banco de Dados e Plugins',
-      description: 'Rotina semanal obrigatória de snapshot no servidor Hostinger e atualização de segurança do Core do WordPress.',
-      client_id: 'cli-2',
-      project_id: 'proj-2',
-      assignee_id: 'usr-colab-1',
-      participant_ids: ['usr-colab-1'],
-      priority: 'URGENT',
-      status: 'A_FAZER',
-      start_date: '2026-09-01',
-      due_date: '2026-09-01',
-      due_time: '09:00',
-      is_recurring: true,
-      recurrence_frequency: 'SEMANAL',
-      recurrence_rule: 'Toda terça-feira às 09:00',
-      subtasks: [],
-      checklist: [],
-      comments: [],
-      attachments: [],
-      history: [],
-      created_by: 'Caio Rocha',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }
-  ];
-
-  dbData = {
-    version: 1,
-    users: initialUsers,
-    clients: initialClients,
-    projects: initialProjects,
-    project_members: initialMembers,
-    tasks: initialTasks
-  };
-
-  saveDb();
-  console.log('[DB] Banco de dados semeado com sucesso!');
-}
-
-// -------------------------------------------------------------
-// REPOSITÓRIO DE USUÁRIOS
-// -------------------------------------------------------------
-export const userRepository = {
-  findAll: (filter?: { role?: UserRole; status?: UserStatus; search?: string }) => {
-    return dbData.users
-      .filter(u => {
-        if (filter?.role && u.role !== filter.role) return false;
-        if (filter?.status && u.status !== filter.status) return false;
-        if (filter?.search) {
-          const s = filter.search.toLowerCase();
-          return u.name.toLowerCase().includes(s) || u.email.toLowerCase().includes(s);
-        }
-        return true;
-      })
-      .map(({ password_hash, ...rest }) => rest);
-  },
-
-  findById: (id: string) => {
-    const user = dbData.users.find(u => u.id === id);
-    if (!user) return null;
-    const { password_hash, ...rest } = user;
-    return rest;
-  },
-
-  findByEmail: (email: string) => {
-    return dbData.users.find(u => u.email.toLowerCase() === email.toLowerCase()) || null;
-  },
-
-  create: (data: Omit<DbUser, 'id' | 'created_at' | 'updated_at'>) => {
-    const newUser: DbUser = {
-      ...data,
-      id: `usr-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-    dbData.users.push(newUser);
-    saveDb();
-    const { password_hash, ...safeUser } = newUser;
-    return safeUser;
-  },
-
-  update: (id: string, updates: Partial<Omit<DbUser, 'id' | 'created_at'>>) => {
-    const idx = dbData.users.findIndex(u => u.id === id);
-    if (idx === -1) return null;
-
-    dbData.users[idx] = {
-      ...dbData.users[idx],
-      ...updates,
-      updated_at: new Date().toISOString()
-    };
-    saveDb();
-    const { password_hash, ...safeUser } = dbData.users[idx];
-    return safeUser;
-  }
-};
-
-// -------------------------------------------------------------
-// REPOSITÓRIO DE CLIENTES
-// -------------------------------------------------------------
-export const clientRepository = {
-  findAll: (filter?: { status?: ClientStatus; search?: string }) => {
-    return dbData.clients.filter(c => {
-      if (filter?.status && c.status !== filter.status) return false;
-      if (filter?.search) {
-        const s = filter.search.toLowerCase();
-        return c.name.toLowerCase().includes(s) || 
-               c.company_name.toLowerCase().includes(s) || 
-               c.contact_name.toLowerCase().includes(s) ||
-               c.email.toLowerCase().includes(s);
-      }
-      return true;
+  const membersByProject = new Map<string, any[]>();
+  for (const member of membersResult.rows) {
+    const members = membersByProject.get(member.project_id) || [];
+    members.push({
+      id: member.id,
+      name: member.name,
+      avatar: member.avatar,
+      job_title: member.job_title,
+      role: member.role
     });
-  },
+    membersByProject.set(member.project_id, members);
+  }
 
-  findById: (id: string) => {
-    return dbData.clients.find(c => c.id === id) || null;
-  },
-
-  create: (data: Omit<DbClient, 'id' | 'created_at' | 'updated_at'>) => {
-    const newClient: DbClient = {
-      ...data,
-      id: `cli-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+  return rows.map(row => {
+    const { client_name, client_company, manager_name, manager_avatar, ...projectRow } = row;
+    return {
+      ...normalizeProject(projectRow),
+      clientName: client_name || 'Cliente Desconhecido',
+      clientCompany: client_company || '',
+      managerName: manager_name || 'Gestor Não Atribuído',
+      managerAvatar: manager_avatar || '',
+      teamMembers: membersByProject.get(row.id) || []
     };
-    dbData.clients.unshift(newClient);
-    saveDb();
-    return newClient;
+  });
+}
+
+export async function initDatabase(): Promise<void> {
+  const result = await getPool().query<{
+    users_table: string | null;
+    clients_table: string | null;
+    projects_table: string | null;
+    project_members_table: string | null;
+    tasks_table: string | null;
+    migrations_table: string | null;
+  }>(`
+    SELECT
+      to_regclass('public.users')::text AS users_table,
+      to_regclass('public.clients')::text AS clients_table,
+      to_regclass('public.projects')::text AS projects_table,
+      to_regclass('public.project_members')::text AS project_members_table,
+      to_regclass('public.tasks')::text AS tasks_table,
+      to_regclass('public.schema_migrations')::text AS migrations_table
+  `);
+
+  const state = result.rows[0];
+  if (!state.users_table || !state.clients_table || !state.projects_table || !state.project_members_table || !state.tasks_table || !state.migrations_table) {
+    throw new Error('Banco PostgreSQL ainda não foi migrado. Execute npm run db:migrate.');
+  }
+
+  const requiredMigrations = listMigrationFiles();
+  const applied = await getPool().query<{ filename: string }>(
+    'SELECT filename FROM schema_migrations WHERE filename = ANY($1::text[])',
+    [requiredMigrations]
+  );
+  if (applied.rows.length !== requiredMigrations.length) {
+    throw new Error('Existem migrations PostgreSQL pendentes. Execute npm run db:migrate.');
+  }
+
+  console.log('[DB] Conexão PostgreSQL validada e schema principal disponível.');
+}
+
+export const userRepository = {
+  findAll: async (filter?: { role?: UserRole; status?: UserStatus; search?: string }): Promise<SafeUser[]> => {
+    const where: string[] = [];
+    const values: unknown[] = [];
+
+    if (filter?.role) {
+      values.push(filter.role);
+      where.push(`role = $${values.length}`);
+    }
+    if (filter?.status) {
+      values.push(filter.status);
+      where.push(`status = $${values.length}`);
+    }
+    if (filter?.search) {
+      values.push(`%${filter.search}%`);
+      where.push(`(name ILIKE $${values.length} OR email ILIKE $${values.length})`);
+    }
+
+    const result = await getPool().query(
+      `SELECT id, name, email, avatar, role, job_title, status, created_at, updated_at
+       FROM users
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY name`,
+      values
+    );
+    return result.rows.map(toSafeUser);
   },
 
-  update: (id: string, updates: Partial<Omit<DbClient, 'id' | 'created_at'>>) => {
-    const idx = dbData.clients.findIndex(c => c.id === id);
-    if (idx === -1) return null;
+  findById: async (id: string): Promise<SafeUser | null> => {
+    const result = await getPool().query(
+      `SELECT id, name, email, avatar, role, job_title, status, created_at, updated_at
+       FROM users WHERE id = $1`,
+      [id]
+    );
+    return result.rowCount ? toSafeUser(result.rows[0]) : null;
+  },
 
-    dbData.clients[idx] = {
-      ...dbData.clients[idx],
-      ...updates,
-      updated_at: new Date().toISOString()
+  findByEmail: async (email: string): Promise<DbUser | null> => {
+    const result = await getPool().query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    return result.rowCount ? normalizeUser(result.rows[0]) : null;
+  },
+
+  create: async (data: Omit<DbUser, 'id' | 'created_at' | 'updated_at'>): Promise<SafeUser> => {
+    const result = await getPool().query(
+      `INSERT INTO users (name, email, password_hash, avatar, role, job_title, status)
+       VALUES ($1, LOWER($2), $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [data.name, data.email, data.password_hash, data.avatar, data.role, data.job_title, data.status]
+    );
+    return toSafeUser(result.rows[0]);
+  },
+
+  update: async (id: string, updates: Partial<Omit<DbUser, 'id' | 'created_at' | 'updated_at'>>): Promise<SafeUser | null> => {
+    const columnMap: Record<string, string> = {
+      name: 'name',
+      email: 'email',
+      password_hash: 'password_hash',
+      avatar: 'avatar',
+      role: 'role',
+      job_title: 'job_title',
+      status: 'status'
     };
-    saveDb();
-    return dbData.clients[idx];
-  },
+    const entries = Object.entries(updates).filter(([key, value]) => key in columnMap && value !== undefined);
+    if (entries.length === 0) return userRepository.findById(id);
 
-  // Soft delete / alteração de status para arquivado
-  archive: (id: string) => {
-    return clientRepository.update(id, { status: 'ARCHIVED' });
+    const values = entries.map(([, value]) => value);
+    const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
+    values.push(id);
+    const result = await getPool().query(
+      `UPDATE users SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING *`,
+      values
+    );
+    return result.rowCount ? toSafeUser(result.rows[0]) : null;
   }
 };
 
-// -------------------------------------------------------------
-// REPOSITÓRIO DE PROJETOS & MEMBROS
-// -------------------------------------------------------------
-export const projectRepository = {
-  findAll: (user?: { id: string; role: UserRole }, filter?: { status?: ProjectStatus; clientId?: string; type?: ProjectType; search?: string }) => {
-    let projects = dbData.projects;
+export const clientRepository = {
+  findAll: async (
+    user?: AuthScope,
+    filter?: { status?: ClientStatus; search?: string }
+  ): Promise<DbClient[]> => {
+    const where: string[] = [];
+    const values: unknown[] = [];
 
-    // Regras de Acesso Baseadas em Permissão:
-    // SUPER_ADMIN e ADMIN vêem todos os projetos
-    // PROJECT_MANAGER vê projetos que gerencia OU que é membro
-    // COLLABORATOR vê SOMENTE projetos dos quais participa na tabela project_members
-    if (user) {
-      if (user.role === 'PROJECT_MANAGER') {
-        const memberProjectIds = new Set(
-          dbData.project_members.filter(pm => pm.user_id === user.id).map(pm => pm.project_id)
-        );
-        projects = projects.filter(p => p.manager_id === user.id || memberProjectIds.has(p.id));
-      } else if (user.role === 'COLLABORATOR') {
-        const memberProjectIds = new Set(
-          dbData.project_members.filter(pm => pm.user_id === user.id).map(pm => pm.project_id)
-        );
-        projects = projects.filter(p => memberProjectIds.has(p.id));
-      }
+    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'ADMIN') {
+      values.push(user.id);
+      const userParam = `$${values.length}`;
+      where.push(`EXISTS (
+        SELECT 1 FROM projects p
+        WHERE p.client_id = c.id
+          AND (
+            ${user.role === 'PROJECT_MANAGER' ? `p.manager_id = ${userParam} OR` : ''}
+            EXISTS (
+              SELECT 1 FROM project_members pm
+              WHERE pm.project_id = p.id AND pm.user_id = ${userParam}
+            )
+          )
+      )`);
     }
+    if (filter?.status) {
+      values.push(filter.status);
+      where.push(`c.status = $${values.length}`);
+    }
+    if (filter?.search) {
+      values.push(`%${filter.search}%`);
+      where.push(`(c.name ILIKE $${values.length} OR c.company_name ILIKE $${values.length} OR c.contact_name ILIKE $${values.length} OR c.email ILIKE $${values.length})`);
+    }
+
+    const result = await getPool().query(
+      `SELECT c.* FROM clients c
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY c.created_at DESC`,
+      values
+    );
+    return result.rows.map(normalizeClient);
+  },
+
+  findById: async (id: string, user?: AuthScope): Promise<DbClient | null> => {
+    const values: unknown[] = [id];
+    const where = ['c.id = $1'];
+    if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'ADMIN') {
+      values.push(user.id);
+      where.push(`EXISTS (
+        SELECT 1 FROM projects p
+        WHERE p.client_id = c.id
+          AND (
+            ${user.role === 'PROJECT_MANAGER' ? 'p.manager_id = $2 OR' : ''}
+            EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_id = $2)
+          )
+      )`);
+    }
+    const result = await getPool().query(`SELECT c.* FROM clients c WHERE ${where.join(' AND ')}`, values);
+    return result.rowCount ? normalizeClient(result.rows[0]) : null;
+  },
+
+  create: async (data: Omit<DbClient, 'id' | 'created_at' | 'updated_at'>): Promise<DbClient> => {
+    const result = await getPool().query(
+      `INSERT INTO clients (
+        name, company_name, logo, contact_name, email, phone, status,
+        lead_manager_id, notes, monthly_services
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[])
+      RETURNING *`,
+      [
+        data.name, data.company_name, data.logo, data.contact_name, data.email,
+        data.phone, data.status, data.lead_manager_id || null, data.notes,
+        data.monthly_services || []
+      ]
+    );
+    return normalizeClient(result.rows[0]);
+  },
+
+  update: async (id: string, updates: Partial<Omit<DbClient, 'id' | 'created_at' | 'updated_at'>>): Promise<DbClient | null> => {
+    const columnMap: Record<string, string> = {
+      name: 'name', company_name: 'company_name', logo: 'logo', contact_name: 'contact_name',
+      email: 'email', phone: 'phone', status: 'status', lead_manager_id: 'lead_manager_id',
+      notes: 'notes', monthly_services: 'monthly_services'
+    };
+    const entries = Object.entries(updates).filter(([key, value]) => key in columnMap && value !== undefined);
+    if (entries.length === 0) return clientRepository.findById(id);
+
+    const values = entries.map(([, value]) => value);
+    const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
+    values.push(id);
+    const result = await getPool().query(
+      `UPDATE clients SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING *`,
+      values
+    );
+    return result.rowCount ? normalizeClient(result.rows[0]) : null;
+  },
+
+  archive: async (id: string): Promise<DbClient | null> => clientRepository.update(id, { status: 'ARCHIVED' })
+};
+
+export const projectRepository = {
+  findAll: async (
+    user?: AuthScope,
+    filter?: { status?: ProjectStatus; clientId?: string; type?: ProjectType; search?: string }
+  ): Promise<any[]> => {
+    const where: string[] = [];
+    const values: unknown[] = [];
+    addRestrictedProjectAccess(where, values, user);
 
     if (filter?.status) {
-      projects = projects.filter(p => p.status === filter.status);
+      values.push(filter.status);
+      where.push(`p.status = $${values.length}`);
     }
     if (filter?.clientId) {
-      projects = projects.filter(p => p.client_id === filter.clientId);
+      values.push(filter.clientId);
+      where.push(`p.client_id = $${values.length}`);
     }
     if (filter?.type) {
-      projects = projects.filter(p => p.project_type === filter.type);
+      values.push(filter.type);
+      where.push(`p.project_type = $${values.length}`);
     }
     if (filter?.search) {
-      const s = filter.search.toLowerCase();
-      projects = projects.filter(p => p.name.toLowerCase().includes(s) || (p.description && p.description.toLowerCase().includes(s)));
+      values.push(`%${filter.search}%`);
+      where.push(`(p.name ILIKE $${values.length} OR p.description ILIKE $${values.length})`);
     }
 
-    // Join com Client, Manager e Team Members
-    return projects.map(p => {
-      const client = dbData.clients.find(c => c.id === p.client_id);
-      const manager = dbData.users.find(u => u.id === p.manager_id);
-      const memberLinks = dbData.project_members.filter(pm => pm.project_id === p.id);
-      const memberUsers = memberLinks
-        .map(pm => dbData.users.find(u => u.id === pm.user_id))
-        .filter((u): u is DbUser => Boolean(u))
-        .map(u => ({
-          id: u.id,
-          name: u.name,
-          avatar: u.avatar,
-          job_title: u.job_title,
-          role: u.role
-        }));
+    const result = await getPool().query(
+      `SELECT p.*, c.name AS client_name, c.company_name AS client_company,
+              manager.name AS manager_name, manager.avatar AS manager_avatar
+       FROM projects p
+       INNER JOIN clients c ON c.id = p.client_id
+       INNER JOIN users manager ON manager.id = p.manager_id
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY p.created_at DESC`,
+      values
+    );
+    return enrichProjects(result.rows);
+  },
 
-      return {
-        ...p,
-        clientName: client?.name || 'Cliente Desconhecido',
-        clientCompany: client?.company_name || '',
-        managerName: manager?.name || 'Gestor Não Atribuído',
-        managerAvatar: manager?.avatar || '',
-        teamMembers: memberUsers
-      };
+  findById: async (id: string, user?: AuthScope): Promise<any | null> => {
+    const where = ['p.id = $1'];
+    const values: unknown[] = [id];
+    addRestrictedProjectAccess(where, values, user);
+    const result = await getPool().query(
+      `SELECT p.*, c.name AS client_name, c.company_name AS client_company,
+              manager.name AS manager_name, manager.avatar AS manager_avatar
+       FROM projects p
+       INNER JOIN clients c ON c.id = p.client_id
+       INNER JOIN users manager ON manager.id = p.manager_id
+       WHERE ${where.join(' AND ')}`,
+      values
+    );
+    if (!result.rowCount) return null;
+    return (await enrichProjects(result.rows))[0];
+  },
+
+  create: async (
+    data: Omit<DbProject, 'id' | 'created_at' | 'updated_at'>,
+    teamUserIds: string[] = []
+  ): Promise<any> => {
+    const projectId = await withTransaction(async client => {
+      const projectResult = await client.query<{ id: string }>(
+        `INSERT INTO projects (
+          name, description, client_id, project_type, manager_id, status, priority,
+          start_date, due_date, progress, is_recurring, created_by, briefing
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING id`,
+        [
+          data.name, data.description, data.client_id, data.project_type, data.manager_id,
+          data.status, data.priority, data.start_date || null, data.due_date || null,
+          data.progress, data.is_recurring, data.created_by || null, data.briefing || {}
+        ]
+      );
+      const id = projectResult.rows[0].id;
+      await replaceProjectMembers(client, id, data.manager_id, teamUserIds);
+      return id;
     });
+    return projectRepository.findById(projectId);
   },
 
-  findById: (id: string, user?: { id: string; role: UserRole }) => {
-    const project = dbData.projects.find(p => p.id === id);
-    if (!project) return null;
+  update: async (
+    id: string,
+    updates: Partial<Omit<DbProject, 'id' | 'created_at' | 'updated_at'>>,
+    teamUserIds?: string[]
+  ): Promise<any | null> => {
+    const updated = await withTransaction(async client => {
+      const currentResult = await client.query<{ manager_id: string }>(
+        'SELECT manager_id FROM projects WHERE id = $1 FOR UPDATE',
+        [id]
+      );
+      if (!currentResult.rowCount) return false;
 
-    // Checagem de permissão
-    if (user && user.role === 'COLLABORATOR') {
-      const isMember = dbData.project_members.some(pm => pm.project_id === id && pm.user_id === user.id);
-      if (!isMember) return null;
-    } else if (user && user.role === 'PROJECT_MANAGER') {
-      const isManagerOrMember = project.manager_id === user.id || 
-        dbData.project_members.some(pm => pm.project_id === id && pm.user_id === user.id);
-      if (!isManagerOrMember) return null;
-    }
-
-    const client = dbData.clients.find(c => c.id === project.client_id);
-    const manager = dbData.users.find(u => u.id === project.manager_id);
-    const memberLinks = dbData.project_members.filter(pm => pm.project_id === id);
-    const memberUsers = memberLinks
-      .map(pm => dbData.users.find(u => u.id === pm.user_id))
-      .filter((u): u is DbUser => Boolean(u))
-      .map(u => ({
-        id: u.id,
-        name: u.name,
-        avatar: u.avatar,
-        job_title: u.job_title,
-        role: u.role
-      }));
-
-    return {
-      ...project,
-      clientName: client?.name || 'Cliente Desconhecido',
-      clientCompany: client?.company_name || '',
-      managerName: manager?.name || 'Gestor Não Atribuído',
-      managerAvatar: manager?.avatar || '',
-      teamMembers: memberUsers
-    };
-  },
-
-  create: (data: Omit<DbProject, 'id' | 'created_at' | 'updated_at'>, teamUserIds: string[] = []) => {
-    const newProject: DbProject = {
-      ...data,
-      id: `proj-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-    dbData.projects.unshift(newProject);
-
-    // Garantir que o gestor esteja como membro
-    const uniqueUserIds = Array.from(new Set([data.manager_id, ...teamUserIds]));
-
-    for (const userId of uniqueUserIds) {
-      dbData.project_members.push({
-        id: `pm-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        project_id: newProject.id,
-        user_id: userId,
-        member_role: userId === data.manager_id ? 'MANAGER' : 'COLLABORATOR',
-        created_at: new Date().toISOString()
-      });
-    }
-
-    saveDb();
-    return projectRepository.findById(newProject.id);
-  },
-
-  update: (id: string, updates: Partial<Omit<DbProject, 'id' | 'created_at'>>, teamUserIds?: string[]) => {
-    const idx = dbData.projects.findIndex(p => p.id === id);
-    if (idx === -1) return null;
-
-    const previousManagerId = dbData.projects[idx].manager_id;
-
-    dbData.projects[idx] = {
-      ...dbData.projects[idx],
-      ...updates,
-      updated_at: new Date().toISOString()
-    };
-
-    if (teamUserIds !== undefined || updates.manager_id !== undefined) {
-      // Atualizar membros
-      const managerId = updates.manager_id || dbData.projects[idx].manager_id;
-      const retainedTeamUserIds = teamUserIds !== undefined
-        ? teamUserIds
-        : dbData.project_members
-            .filter(pm => pm.project_id === id && pm.user_id !== previousManagerId)
-            .map(pm => pm.user_id);
-      const allUserIds = Array.from(new Set([managerId, ...retainedTeamUserIds]));
-
-      // Remover membros antigos do projeto
-      dbData.project_members = dbData.project_members.filter(pm => pm.project_id !== id);
-
-      // Adicionar novos membros
-      for (const uid of allUserIds) {
-        dbData.project_members.push({
-          id: `pm-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-          project_id: id,
-          user_id: uid,
-          member_role: uid === managerId ? 'MANAGER' : 'COLLABORATOR',
-          created_at: new Date().toISOString()
-        });
+      const previousManagerId = currentResult.rows[0].manager_id;
+      const columnMap: Record<string, string> = {
+        name: 'name', description: 'description', client_id: 'client_id', project_type: 'project_type',
+        manager_id: 'manager_id', status: 'status', priority: 'priority', start_date: 'start_date',
+        due_date: 'due_date', progress: 'progress', is_recurring: 'is_recurring', created_by: 'created_by',
+        briefing: 'briefing'
+      };
+      const entries = Object.entries(updates).filter(([key, value]) => key in columnMap && value !== undefined);
+      if (entries.length) {
+        const values = entries.map(([, value]) => value);
+        const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
+        values.push(id);
+        await client.query(`UPDATE projects SET ${assignments.join(', ')} WHERE id = $${values.length}`, values);
       }
-    }
 
-    saveDb();
-    return projectRepository.findById(id);
-  }
-};
-
-// -------------------------------------------------------------
-// REPOSITÓRIO DE TAREFAS
-// -------------------------------------------------------------
-export const taskRepository = {
-  findAll: (
-    filter?: { projectId?: string; clientId?: string; status?: TaskStatus; assigneeId?: string; search?: string },
-    user?: { id: string; role: UserRole }
-  ) => {
-    let tasks = [...(dbData.tasks || [])];
-
-    // RBAC: Colaboradores só veem tarefas de projetos em que são membros ou tarefas atribuídas a eles
-    if (user && user.role === 'COLLABORATOR') {
-      const userProjectIds = dbData.project_members.filter(pm => pm.user_id === user.id).map(pm => pm.project_id);
-      tasks = tasks.filter(t => t.assignee_id === user.id || (t.participant_ids && t.participant_ids.includes(user.id)) || userProjectIds.includes(t.project_id));
-    } else if (user && user.role === 'PROJECT_MANAGER') {
-      const managerProjectIds = dbData.projects.filter(p => p.manager_id === user.id).map(p => p.id);
-      const memberProjectIds = dbData.project_members.filter(pm => pm.user_id === user.id).map(pm => pm.project_id);
-      const allowedProjectIds = Array.from(new Set([...managerProjectIds, ...memberProjectIds]));
-      tasks = tasks.filter(t => t.assignee_id === user.id || allowedProjectIds.includes(t.project_id));
-    }
-
-    if (filter?.projectId) {
-      tasks = tasks.filter(t => t.project_id === filter.projectId);
-    }
-    if (filter?.clientId) {
-      tasks = tasks.filter(t => t.client_id === filter.clientId);
-    }
-    if (filter?.status) {
-      tasks = tasks.filter(t => t.status === filter.status);
-    }
-    if (filter?.assigneeId) {
-      tasks = tasks.filter(t => t.assignee_id === filter.assigneeId);
-    }
-    if (filter?.search) {
-      const s = filter.search.toLowerCase();
-      tasks = tasks.filter(t => t.title.toLowerCase().includes(s) || (t.description && t.description.toLowerCase().includes(s)));
-    }
-
-    // Formatar e fazer join
-    return tasks.map(t => {
-      const client = dbData.clients.find(c => c.id === t.client_id);
-      const project = dbData.projects.find(p => p.id === t.project_id);
-      const assignee = dbData.users.find(u => u.id === t.assignee_id);
-
-      return {
-        id: t.id,
-        title: t.title,
-        description: t.description || '',
-        clientId: t.client_id,
-        clientName: client?.name || 'Cliente',
-        projectId: t.project_id,
-        projectName: project?.name || 'Projeto',
-        assigneeId: t.assignee_id,
-        assigneeName: assignee?.name || 'Não Atribuído',
-        assigneeAvatar: assignee?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-        participantIds: t.participant_ids || [t.assignee_id],
-        priority: t.priority,
-        status: t.status,
-        startDate: t.start_date || '2026-09-01',
-        dueDate: t.due_date,
-        dueTime: t.due_time || '18:00',
-        isRecurring: t.is_recurring,
-        recurrenceFrequency: t.recurrence_frequency,
-        recurrenceRule: t.recurrence_rule,
-        subtasks: (t.subtasks || []).map(s => ({
-          id: s.id,
-          title: s.title,
-          completed: s.completed,
-          isRecurring: s.is_recurring,
-          recurrenceFrequency: s.recurrence_frequency,
-          recurrenceRule: s.recurrence_rule,
-          assigneeName: s.assignee_name || assignee?.name || 'Responsável',
-          dueDate: s.due_date || t.due_date,
-          dueTime: s.due_time || t.due_time
-        })),
-        checklist: t.checklist || [],
-        comments: t.comments || [],
-        attachments: t.attachments || [],
-        history: t.history || [],
-        createdBy: t.created_by,
-        createdAt: t.created_at
-      };
-    });
-  },
-
-  findById: (id: string) => {
-    const t = (dbData.tasks || []).find(task => task.id === id);
-    if (!t) return null;
-
-    const client = dbData.clients.find(c => c.id === t.client_id);
-    const project = dbData.projects.find(p => p.id === t.project_id);
-    const assignee = dbData.users.find(u => u.id === t.assignee_id);
-
-    return {
-      id: t.id,
-      title: t.title,
-      description: t.description || '',
-      clientId: t.client_id,
-      clientName: client?.name || 'Cliente',
-      projectId: t.project_id,
-      projectName: project?.name || 'Projeto',
-      assigneeId: t.assignee_id,
-      assigneeName: assignee?.name || 'Não Atribuído',
-      assigneeAvatar: assignee?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-      participantIds: t.participant_ids || [t.assignee_id],
-      priority: t.priority,
-      status: t.status,
-      startDate: t.start_date || '2026-09-01',
-      dueDate: t.due_date,
-      dueTime: t.due_time || '18:00',
-      isRecurring: t.is_recurring,
-      recurrenceFrequency: t.recurrence_frequency,
-      recurrenceRule: t.recurrence_rule,
-      subtasks: (t.subtasks || []).map(s => ({
-        id: s.id,
-        title: s.title,
-        completed: s.completed,
-        isRecurring: s.is_recurring,
-        recurrenceFrequency: s.recurrence_frequency,
-        recurrenceRule: s.recurrence_rule,
-        assigneeName: s.assignee_name || assignee?.name || 'Responsável',
-        dueDate: s.due_date || t.due_date,
-        dueTime: s.due_time || t.due_time
-      })),
-      checklist: t.checklist || [],
-      comments: t.comments || [],
-      attachments: t.attachments || [],
-      history: t.history || [],
-      createdBy: t.created_by,
-      createdAt: t.created_at
-    };
-  },
-
-  create: (data: any, user?: { id: string; name: string; role: UserRole }) => {
-    if (!dbData.tasks) dbData.tasks = [];
-
-    const newTask: DbTask = {
-      id: data.id || `task-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      title: data.title,
-      description: data.description || '',
-      client_id: data.clientId || data.client_id,
-      project_id: data.projectId || data.project_id,
-      assignee_id: data.assigneeId || data.assignee_id || (user ? user.id : 'usr-gestor-1'),
-      participant_ids: data.participantIds || data.participant_ids || [data.assigneeId || (user ? user.id : 'usr-gestor-1')],
-      priority: data.priority || 'HIGH',
-      status: data.status || 'A_FAZER',
-      start_date: data.startDate || data.start_date || '2026-09-01',
-      due_date: data.dueDate || data.due_date || '2026-09-01',
-      due_time: data.dueTime || data.due_time || '18:00',
-      is_recurring: Boolean(data.isRecurring || data.is_recurring),
-      recurrence_frequency: data.recurrenceFrequency || data.recurrence_frequency,
-      recurrence_rule: data.recurrenceRule || data.recurrence_rule,
-      subtasks: (data.subtasks || []).map((s: any) => ({
-        id: s.id || `sub-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        title: s.title,
-        completed: Boolean(s.completed),
-        is_recurring: Boolean(s.isRecurring || s.is_recurring),
-        recurrence_frequency: s.recurrenceFrequency || s.recurrence_frequency,
-        recurrence_rule: s.recurrenceRule || s.recurrence_rule,
-        assignee_name: s.assigneeName || s.assignee_name,
-        due_date: s.dueDate || s.due_date,
-        due_time: s.dueTime || s.due_time
-      })),
-      checklist: data.checklist || [],
-      comments: data.comments || [],
-      attachments: data.attachments || [],
-      history: [
-        {
-          id: `h-${Date.now()}`,
-          user: user?.name || 'Administrador',
-          action: 'Criou a demanda operacional',
-          timestamp: new Date().toISOString()
+      const managerId = updates.manager_id || previousManagerId;
+      if (teamUserIds !== undefined || managerId !== previousManagerId) {
+        let effectiveTeamUserIds = teamUserIds;
+        if (effectiveTeamUserIds === undefined) {
+          const members = await client.query<{ user_id: string }>(
+            'SELECT user_id FROM project_members WHERE project_id = $1 AND user_id <> $2',
+            [id, previousManagerId]
+          );
+          effectiveTeamUserIds = members.rows.map(member => member.user_id);
         }
-      ],
-      created_by: user?.name || 'Sistema',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-
-    dbData.tasks.unshift(newTask);
-    saveDb();
-    return taskRepository.findById(newTask.id);
-  },
-
-  update: (id: string, updates: any, user?: { id: string; name: string; role: UserRole }) => {
-    if (!dbData.tasks) dbData.tasks = [];
-    const idx = dbData.tasks.findIndex(t => t.id === id);
-    if (idx === -1) return null;
-
-    const curr = dbData.tasks[idx];
-
-    // RBAC: Apenas SUPER_ADMIN ou ADMIN podem alterar o responsável principal (assignee_id)
-    const newAssigneeId = updates.assigneeId || updates.assignee_id;
-    let targetAssigneeId = curr.assignee_id;
-    if (newAssigneeId && newAssigneeId !== curr.assignee_id) {
-      if (user && user.role !== 'SUPER_ADMIN' && user.role !== 'ADMIN') {
-        // Ignora alteração de responsável se for colaborador
-        targetAssigneeId = curr.assignee_id;
-      } else {
-        targetAssigneeId = newAssigneeId;
+        await replaceProjectMembers(client, id, managerId, effectiveTeamUserIds);
       }
-    }
-
-    dbData.tasks[idx] = {
-      ...curr,
-      title: updates.title !== undefined ? updates.title : curr.title,
-      description: updates.description !== undefined ? updates.description : curr.description,
-      client_id: (updates.clientId || updates.client_id) !== undefined ? (updates.clientId || updates.client_id) : curr.client_id,
-      project_id: (updates.projectId || updates.project_id) !== undefined ? (updates.projectId || updates.project_id) : curr.project_id,
-      assignee_id: targetAssigneeId,
-      participant_ids: (updates.participantIds || updates.participant_ids) !== undefined ? (updates.participantIds || updates.participant_ids) : curr.participant_ids,
-      priority: updates.priority !== undefined ? updates.priority : curr.priority,
-      status: updates.status !== undefined ? updates.status : curr.status,
-      start_date: (updates.startDate || updates.start_date) !== undefined ? (updates.startDate || updates.start_date) : curr.start_date,
-      due_date: (updates.dueDate || updates.due_date) !== undefined ? (updates.dueDate || updates.due_date) : curr.due_date,
-      due_time: (updates.dueTime || updates.due_time) !== undefined ? (updates.dueTime || updates.due_time) : curr.due_time,
-      is_recurring: updates.isRecurring !== undefined ? updates.isRecurring : curr.is_recurring,
-      recurrence_frequency: updates.recurrenceFrequency !== undefined ? updates.recurrenceFrequency : curr.recurrence_frequency,
-      recurrence_rule: updates.recurrenceRule !== undefined ? updates.recurrenceRule : curr.recurrence_rule,
-      subtasks: updates.subtasks !== undefined ? updates.subtasks.map((s: any) => ({
-        id: s.id || `sub-${Date.now()}`,
-        title: s.title,
-        completed: Boolean(s.completed),
-        is_recurring: Boolean(s.isRecurring || s.is_recurring),
-        recurrence_frequency: s.recurrenceFrequency || s.recurrence_frequency,
-        recurrence_rule: s.recurrenceRule || s.recurrence_rule,
-        assignee_name: s.assigneeName || s.assignee_name,
-        due_date: s.dueDate || s.due_date,
-        due_time: s.dueTime || s.due_time
-      })) : curr.subtasks,
-      checklist: updates.checklist !== undefined ? updates.checklist : curr.checklist,
-      comments: updates.comments !== undefined ? updates.comments : curr.comments,
-      attachments: updates.attachments !== undefined ? updates.attachments : curr.attachments,
-      history: updates.history !== undefined ? updates.history : curr.history,
-      updated_at: new Date().toISOString()
-    };
-
-    saveDb();
-    return taskRepository.findById(id);
-  },
-
-  delete: (id: string) => {
-    if (!dbData.tasks) return false;
-    const initialLen = dbData.tasks.length;
-    dbData.tasks = dbData.tasks.filter(t => t.id !== id);
-    if (dbData.tasks.length !== initialLen) {
-      saveDb();
       return true;
-    }
-    return false;
+    });
+    return updated ? projectRepository.findById(id) : null;
   }
 };
+
+function normalizeTask(row: any): any {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description || '',
+    clientId: row.client_id,
+    clientName: row.client_name || 'Cliente',
+    projectId: row.project_id,
+    projectName: row.project_name || 'Projeto',
+    assigneeId: row.responsible_user_id,
+    assigneeName: row.responsible_name || 'Não atribuído',
+    assigneeAvatar: row.responsible_avatar || '',
+    participantIds: [row.responsible_user_id],
+    priority: row.priority,
+    status: row.status,
+    startDate: row.start_date ? toDateString(row.start_date) : undefined,
+    dueDate: toDateString(row.due_date),
+    dueTime: row.due_time ? String(row.due_time).slice(0, 5) : undefined,
+    completedAt: row.completed_at ? toIsoString(row.completed_at) : undefined,
+    isRecurring: false,
+    subtasks: [],
+    checklist: [],
+    comments: [],
+    attachments: [],
+    history: [],
+    createdBy: row.created_by_name || '',
+    createdAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at)
+  };
+}
+
+function taskSelect(): string {
+  return `SELECT t.*, p.client_id, p.name AS project_name, c.name AS client_name,
+                 responsible.name AS responsible_name, responsible.avatar AS responsible_avatar,
+                 creator.name AS created_by_name
+          FROM tasks t
+          INNER JOIN projects p ON p.id = t.project_id
+          INNER JOIN clients c ON c.id = p.client_id
+          INNER JOIN users responsible ON responsible.id = t.responsible_user_id
+          INNER JOIN users creator ON creator.id = t.created_by`;
+}
+
+export const taskRepository = {
+  findAll: async (
+    filter: { projectId?: string; clientId?: string; status?: TaskStatus; assigneeId?: string; search?: string } = {},
+    user?: AuthScope
+  ): Promise<any[]> => {
+    const where: string[] = [];
+    const values: unknown[] = [];
+    addRestrictedProjectAccess(where, values, user, 'p');
+    if (filter.projectId) { values.push(filter.projectId); where.push(`t.project_id = $${values.length}`); }
+    if (filter.clientId) { values.push(filter.clientId); where.push(`p.client_id = $${values.length}`); }
+    if (filter.status) { values.push(filter.status); where.push(`t.status = $${values.length}`); }
+    if (filter.assigneeId) { values.push(filter.assigneeId); where.push(`t.responsible_user_id = $${values.length}`); }
+    if (filter.search) {
+      values.push(`%${filter.search}%`);
+      where.push(`(t.title ILIKE $${values.length} OR t.description ILIKE $${values.length})`);
+    }
+    const result = await getPool().query(
+      `${taskSelect()} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY t.created_at DESC`,
+      values
+    );
+    return result.rows.map(normalizeTask);
+  },
+
+  findById: async (id: string, user?: AuthScope): Promise<any | null> => {
+    const where = ['t.id = $1'];
+    const values: unknown[] = [id];
+    addRestrictedProjectAccess(where, values, user, 'p');
+    const result = await getPool().query(`${taskSelect()} WHERE ${where.join(' AND ')}`, values);
+    return result.rowCount ? normalizeTask(result.rows[0]) : null;
+  },
+
+  create: async (data: Omit<DbTask, 'id' | 'created_at' | 'updated_at'>): Promise<any> => {
+    const result = await getPool().query<{ id: string }>(
+      `INSERT INTO tasks (
+        project_id, title, description, responsible_user_id, status, priority,
+        start_date, due_date, due_time, completed_at, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING id`,
+      [data.project_id, data.title, data.description, data.responsible_user_id, data.status,
+       data.priority, data.start_date || null, data.due_date, data.due_time || null,
+       data.completed_at || null, data.created_by]
+    );
+    return taskRepository.findById(result.rows[0].id);
+  },
+
+  update: async (id: string, updates: Partial<Omit<DbTask, 'id' | 'created_at' | 'updated_at'>>): Promise<any | null> => {
+    const columnMap: Record<string, string> = {
+      project_id: 'project_id', title: 'title', description: 'description',
+      responsible_user_id: 'responsible_user_id', status: 'status', priority: 'priority',
+      start_date: 'start_date', due_date: 'due_date', due_time: 'due_time', completed_at: 'completed_at'
+    };
+    const entries = Object.entries(updates).filter(([key, value]) => key in columnMap && value !== undefined);
+    if (!entries.length) return taskRepository.findById(id);
+    const values = entries.map(([, value]) => value);
+    const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
+    values.push(id);
+    const result = await getPool().query(
+      `UPDATE tasks SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING id`, values
+    );
+    return result.rowCount ? taskRepository.findById(id) : null;
+  },
+
+  delete: async (id: string): Promise<boolean> => {
+    const result = await getPool().query('DELETE FROM tasks WHERE id = $1', [id]);
+    return Boolean(result.rowCount);
+  }
+};
+
+async function replaceProjectMembers(
+  client: PoolClient,
+  projectId: string,
+  managerId: string,
+  teamUserIds: string[]
+): Promise<void> {
+  const uniqueUserIds = Array.from(new Set([managerId, ...teamUserIds]));
+  await client.query('DELETE FROM project_members WHERE project_id = $1', [projectId]);
+  for (const userId of uniqueUserIds) {
+    await client.query(
+      `INSERT INTO project_members (project_id, user_id, member_role)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (project_id, user_id)
+       DO UPDATE SET member_role = EXCLUDED.member_role`,
+      [projectId, userId, userId === managerId ? 'MANAGER' : 'COLLABORATOR']
+    );
+  }
+}

@@ -2,6 +2,6 @@
   "name": "Tecnihub - Sistema de Gerenciamento de Projetos",
   "description": "Central operacional e sistema de gerenciamento de projetos e demandas recorrentes para agências com experiência estilo ClickUp e Linear.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }
 

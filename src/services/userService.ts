@@ -22,13 +22,14 @@ export function formatUserFromBackend(u: any): User {
     role: roleMapToFrontend[u.role] || (u.role as UserRole),
     roleTitle: u.job_title || 'Especialista',
     email: u.email,
-    avatar: u.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=10b981&color=fff`,
+    avatar: u.avatar || '',
     position: u.job_title || 'Especialista',
     activeProjectsCount: u.activeProjectsCount || 0,
     currentTasksCount: 0,
     overdueTasksCount: 0,
     next7DaysTasksCount: 0,
-    status: u.status === 'ACTIVE' ? 'ONLINE' : 'OFFLINE'
+    status: u.status === 'ACTIVE' ? 'ONLINE' : 'OFFLINE',
+    accountStatus: u.status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE'
   };
 }
 

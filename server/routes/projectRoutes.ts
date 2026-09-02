@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { projectRepository, clientRepository, userRepository, ProjectStatus, ProjectType, Priority } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
+import { isUuid } from '../validation.js';
 
 export const projectRouter = Router();
 
@@ -8,13 +9,13 @@ const PROJECT_STATUSES: ProjectStatus[] = ['PLANNING', 'WAITING_TO_START', 'IN_P
 const PROJECT_TYPES: ProjectType[] = ['WEBSITE', 'LANDING_PAGE', 'ECOMMERCE', 'GOOGLE_ADS', 'META_ADS', 'SEO', 'SOCIAL_MEDIA', 'MAINTENANCE', 'INTERNAL', 'OTHER'];
 const PRIORITIES: Priority[] = ['URGENT', 'HIGH', 'NORMAL', 'LOW'];
 
-function getInvalidTeamMemberId(teamUserIds: unknown): string | null {
+async function getInvalidTeamMemberId(teamUserIds: unknown): Promise<string | null> {
   if (teamUserIds === undefined) return null;
   if (!Array.isArray(teamUserIds)) return 'formato-invalido';
 
   for (const userId of teamUserIds) {
-    if (typeof userId !== 'string') return String(userId);
-    const user = userRepository.findById(userId);
+    if (!isUuid(userId)) return String(userId);
+    const user = await userRepository.findById(userId);
     if (!user || user.status !== 'ACTIVE') return userId;
   }
 
@@ -22,11 +23,11 @@ function getInvalidTeamMemberId(teamUserIds: unknown): string | null {
 }
 
 // GET /api/projects - Listar projetos respeitando RBAC
-projectRouter.get('/', authenticateToken, (req: AuthRequest, res: Response) => {
+projectRouter.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { status, clientId, type, search } = req.query;
 
-    const projects = projectRepository.findAll(req.user, {
+    const projects = await projectRepository.findAll(req.user, {
       status: status as ProjectStatus,
       clientId: clientId as string,
       type: type as ProjectType,
@@ -40,9 +41,12 @@ projectRouter.get('/', authenticateToken, (req: AuthRequest, res: Response) => {
 });
 
 // GET /api/projects/:id - Detalhes do projeto
-projectRouter.get('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+projectRouter.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const project = projectRepository.findById(req.params.id, req.user);
+    if (!isUuid(req.params.id)) {
+      return res.status(404).json({ error: 'Projeto não encontrado ou você não tem permissão para acessá-lo.' });
+    }
+    const project = await projectRepository.findById(req.params.id, req.user);
     if (!project) {
       return res.status(404).json({ error: 'Projeto não encontrado ou você não tem permissão para acessá-lo.' });
     }
@@ -53,7 +57,7 @@ projectRouter.get('/:id', authenticateToken, (req: AuthRequest, res: Response) =
 });
 
 // POST /api/projects - Criar novo projeto
-projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER']), (req: AuthRequest, res: Response) => {
+projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER']), async (req: AuthRequest, res: Response) => {
   try {
     const {
       name,
@@ -67,6 +71,7 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
       due_date,
       progress,
       is_recurring,
+      briefing,
       team_user_ids
     } = req.body;
 
@@ -74,17 +79,20 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
       return res.status(400).json({ error: 'O nome do projeto é obrigatório.' });
     }
 
-    if (!client_id) {
+    if (!client_id || !isUuid(client_id)) {
       return res.status(400).json({ error: 'É obrigatório selecionar um cliente para o projeto.' });
     }
 
-    const client = clientRepository.findById(client_id);
+    const client = await clientRepository.findById(client_id, req.user);
     if (!client) {
       return res.status(404).json({ error: 'O cliente selecionado não foi encontrado.' });
     }
 
     const chosenManagerId = manager_id || req.user?.id;
-    const manager = userRepository.findById(chosenManagerId);
+    if (!isUuid(chosenManagerId)) {
+      return res.status(400).json({ error: 'O gestor selecionado é inválido.' });
+    }
+    const manager = await userRepository.findById(chosenManagerId);
     if (!manager || manager.status !== 'ACTIVE' || manager.role === 'COLLABORATOR') {
       return res.status(404).json({ error: 'O gestor selecionado não foi encontrado.' });
     }
@@ -103,12 +111,12 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
       return res.status(400).json({ error: 'Prioridade de projeto inválida.' });
     }
 
-    const invalidTeamMemberId = getInvalidTeamMemberId(team_user_ids);
+    const invalidTeamMemberId = await getInvalidTeamMemberId(team_user_ids);
     if (invalidTeamMemberId) {
       return res.status(400).json({ error: 'A equipe contém um usuário inválido ou inativo.' });
     }
 
-    const newProject = projectRepository.create({
+    const newProject = await projectRepository.create({
       name: name.trim(),
       description: description ? description.trim() : '',
       client_id,
@@ -120,6 +128,7 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
       due_date: due_date || undefined,
       progress: typeof progress === 'number' ? Math.max(0, Math.min(100, progress)) : 0,
       is_recurring: Boolean(is_recurring),
+      briefing: briefing && typeof briefing === 'object' ? briefing : {},
       created_by: req.user?.id
     }, Array.isArray(team_user_ids) ? team_user_ids : []);
 
@@ -134,21 +143,23 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
 });
 
 // PUT /api/projects/:id - Atualizar projeto
-projectRouter.put('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+projectRouter.put('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const projectId = req.params.id;
-    const existing = projectRepository.findById(projectId, req.user);
+    if (!isUuid(projectId)) {
+      return res.status(404).json({ error: 'Projeto não encontrado ou você não tem permissão para editá-lo.' });
+    }
+    const existing = await projectRepository.findById(projectId, req.user);
 
     if (!existing) {
       return res.status(404).json({ error: 'Projeto não encontrado ou você não tem permissão para editá-lo.' });
     }
 
-    // Apenas SUPER_ADMIN, ADMIN ou o Gestor do projeto podem editar
+    // Administradores editam tudo; gestores com acesso editam apenas campos operacionais.
     const isSuperOrAdmin = req.user?.role === 'SUPER_ADMIN' || req.user?.role === 'ADMIN';
-    const isManagerOfProject = existing.manager_id === req.user?.id;
-
-    if (!isSuperOrAdmin && !isManagerOfProject) {
-      return res.status(403).json({ error: 'Apenas os administradores ou o gestor responsável podem editar este projeto.' });
+    const isProjectManager = req.user?.role === 'PROJECT_MANAGER';
+    if (!isSuperOrAdmin && !isProjectManager) {
+      return res.status(403).json({ error: 'Você não possui controles administrativos deste projeto.' });
     }
 
     const {
@@ -163,19 +174,27 @@ projectRouter.put('/:id', authenticateToken, (req: AuthRequest, res: Response) =
       due_date,
       progress,
       is_recurring,
+      briefing,
       team_user_ids
     } = req.body;
+
+    if (!isSuperOrAdmin && (client_id !== undefined || manager_id !== undefined || team_user_ids !== undefined)) {
+      return res.status(403).json({ error: 'Somente administradores podem trocar cliente, gestor ou colaboradores.' });
+    }
 
     if (req.user?.role === 'PROJECT_MANAGER' && manager_id && manager_id !== req.user.id) {
       return res.status(403).json({ error: 'O gestor do projeto não pode transferir a própria gestão.' });
     }
 
-    if (client_id && !clientRepository.findById(client_id)) {
-      return res.status(404).json({ error: 'O cliente selecionado não foi encontrado.' });
+    if (client_id && (!isUuid(client_id) || !(await clientRepository.findById(client_id, req.user)))) {
+      return res.status(404).json({ error: 'O cliente selecionado não foi encontrado ou não está acessível.' });
     }
 
     if (manager_id) {
-      const manager = userRepository.findById(manager_id);
+      if (!isUuid(manager_id)) {
+        return res.status(400).json({ error: 'O gestor selecionado é inválido.' });
+      }
+      const manager = await userRepository.findById(manager_id);
       if (!manager || manager.status !== 'ACTIVE' || manager.role === 'COLLABORATOR') {
         return res.status(400).json({ error: 'O gestor selecionado é inválido ou está inativo.' });
       }
@@ -191,7 +210,7 @@ projectRouter.put('/:id', authenticateToken, (req: AuthRequest, res: Response) =
       return res.status(400).json({ error: 'Prioridade de projeto inválida.' });
     }
 
-    const invalidTeamMemberId = getInvalidTeamMemberId(team_user_ids);
+    const invalidTeamMemberId = await getInvalidTeamMemberId(team_user_ids);
     if (invalidTeamMemberId) {
       return res.status(400).json({ error: 'A equipe contém um usuário inválido ou inativo.' });
     }
@@ -208,8 +227,9 @@ projectRouter.put('/:id', authenticateToken, (req: AuthRequest, res: Response) =
     if (due_date !== undefined) updates.due_date = due_date;
     if (typeof progress === 'number') updates.progress = Math.max(0, Math.min(100, progress));
     if (is_recurring !== undefined) updates.is_recurring = Boolean(is_recurring);
+    if (briefing !== undefined && briefing && typeof briefing === 'object') updates.briefing = briefing;
 
-    const updated = projectRepository.update(
+    const updated = await projectRepository.update(
       projectId, 
       updates, 
       Array.isArray(team_user_ids) ? team_user_ids : undefined

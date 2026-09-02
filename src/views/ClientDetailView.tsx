@@ -161,6 +161,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
             <FolderKanban size={16} className="text-sky-400" />
             Projetos Ativos deste Cliente ({clientProjects.length})
           </h2>
+          {onOpenNewProject && <button onClick={onOpenNewProject} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-zinc-950 text-xs font-bold"><Plus size={13} />Novo projeto</button>}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

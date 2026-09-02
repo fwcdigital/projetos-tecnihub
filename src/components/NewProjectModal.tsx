@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Client, Priority, Project, ProjectStatus, ProjectType, User } from '../types';
 import { X, FolderPlus, Building2, User as UserIcon, Calendar, Repeat, Loader2, AlertCircle } from 'lucide-react';
+import { UserAvatar } from './UserAvatar';
 
 interface NewProjectModalProps {
   isOpen: boolean;
@@ -9,6 +10,7 @@ interface NewProjectModalProps {
   clients: Client[];
   users: User[];
   currentUser: User;
+  defaultClientId?: string;
 }
 
 export const NewProjectModal: React.FC<NewProjectModalProps> = ({
@@ -17,12 +19,13 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
   onAddProject,
   clients,
   users,
-  currentUser
+  currentUser,
+  defaultClientId
 }) => {
   if (!isOpen) return null;
 
   const [name, setName] = useState('');
-  const [clientId, setClientId] = useState(clients[0]?.id || '');
+  const [clientId, setClientId] = useState(defaultClientId || clients[0]?.id || '');
   const [managerId, setManagerId] = useState(currentUser.id);
   const [type, setType] = useState<ProjectType>('SITE');
   const [status, setStatus] = useState<ProjectStatus>('PLANEJAMENTO');
@@ -31,12 +34,20 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
   const [dueDate, setDueDate] = useState('2026-10-30');
   const [isRecurring, setIsRecurring] = useState(false);
   const [description, setDescription] = useState('');
-  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([currentUser.id]);
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selectedClient = clients.find(c => c.id === clientId) || clients[0];
   const selectedManager = users.find(u => u.id === managerId) || currentUser;
+  const activeUsers = users.filter(user => user.accountStatus !== 'INACTIVE');
+  const managerOptions = activeUsers.filter(user => user.role !== 'COLABORADOR');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setClientId(defaultClientId || clients[0]?.id || '');
+    if (currentUser.role === 'GESTOR_PROJETO') setManagerId(currentUser.id);
+  }, [clients, currentUser.id, currentUser.role, defaultClientId, isOpen]);
 
   const projectTypeOptions: { value: ProjectType; label: string }[] = [
     { value: 'SITE', label: 'Criação de Site Institucional' },
@@ -177,15 +188,19 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
                 <UserIcon size={12} className="text-zinc-500" />
                 Gestor Responsável
               </label>
-              <select
+              <div className="flex items-center gap-2">
+                <UserAvatar name={selectedManager.name} src={selectedManager.avatar} className="w-7 h-7" />
+                <select
                 value={managerId}
                 onChange={(e) => setManagerId(e.target.value)}
+                disabled={currentUser.role === 'GESTOR_PROJETO'}
                 className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-sky-500"
               >
-                {users.map(u => (
+                {managerOptions.map(u => (
                   <option key={u.id} value={u.id}>{u.name} ({u.position})</option>
                 ))}
               </select>
+              </div>
             </div>
 
             <div>
@@ -278,7 +293,7 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
               Membros e Especialistas Alocados ao Projeto
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {users.map(u => {
+              {activeUsers.map(u => {
                 const isSelected = selectedUserIds.includes(u.id);
                 return (
                   <button
@@ -291,7 +306,7 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
                         : 'bg-[#181820] border-zinc-700/60 text-zinc-400 hover:border-zinc-600'
                     }`}
                   >
-                    <img src={u.avatar} alt={u.name} className="w-5 h-5 rounded-full object-cover shrink-0" />
+                    <UserAvatar name={u.name} src={u.avatar} className="w-5 h-5" />
                     <div className="truncate">
                       <p className="text-[11px] font-medium truncate">{u.name}</p>
                       <p className="text-[9px] opacity-70 truncate">{u.position}</p>

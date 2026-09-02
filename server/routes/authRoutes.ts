@@ -6,7 +6,7 @@ import { generateToken, authenticateToken, AuthRequest } from '../auth.js';
 export const authRouter = Router();
 
 // POST /api/auth/login
-authRouter.post('/login', (req, res) => {
+authRouter.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -14,7 +14,7 @@ authRouter.post('/login', (req, res) => {
       return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
     }
 
-    const user = userRepository.findByEmail(email.trim());
+    const user = await userRepository.findByEmail(email.trim());
     if (!user) {
       return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
     }
@@ -49,13 +49,13 @@ authRouter.post('/login', (req, res) => {
 });
 
 // GET /api/auth/me
-authRouter.get('/me', authenticateToken, (req: AuthRequest, res: Response) => {
+authRouter.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) {
       return res.status(401).json({ error: 'Não autenticado.' });
     }
 
-    const user = userRepository.findById(req.user.id);
+    const user = await userRepository.findById(req.user.id);
     if (!user) {
       return res.status(404).json({ error: 'Usuário não encontrado.' });
     }

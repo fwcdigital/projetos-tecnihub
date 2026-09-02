@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Client, Project, ProjectType, Task, User } from '../types';
 import { StatusBadge } from '../components/StatusBadge';
 import { PriorityBadge } from '../components/PriorityBadge';
+import { UserAvatar } from '../components/UserAvatar';
 import { 
   FolderKanban, 
   Search, 
@@ -201,7 +202,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
               {/* Bottom Metadata & Footer */}
               <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-2 border-t border-zinc-800/80">
                 <div className="flex items-center gap-1">
-                  <UserIcon size={12} className="text-zinc-500" />
+                  <UserAvatar name={project.managerName} src={project.managerAvatar} className="w-5 h-5" />
                   <span>Gestor: <strong>{project.managerName.split(' ')[0]}</strong></span>
                 </div>
 

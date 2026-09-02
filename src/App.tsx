@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { mockNotifications } from './data/mockData';
 import { 
   Client, 
   NavView, 
@@ -21,6 +20,7 @@ import { MobileBottomNav } from './components/MobileBottomNav';
 import { TaskDrawer } from './components/TaskDrawer';
 import { NewTaskModal } from './components/NewTaskModal';
 import { NewProjectModal } from './components/NewProjectModal';
+import { EditProjectModal } from './components/EditProjectModal';
 import { NewClientModal } from './components/NewClientModal';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
 
@@ -47,7 +47,7 @@ function MainLayout() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  const [notifications, setNotifications] = useState<Notification[]>(mockNotifications);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
 
   // Responsive Navigation State
@@ -64,6 +64,8 @@ function MainLayout() {
   const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
   const [newTaskContext, setNewTaskContext] = useState<{ projectId?: string; clientId?: string } | null>(null);
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
+  const [isEditProjectModalOpen, setIsEditProjectModalOpen] = useState(false);
+  const [newProjectClientId, setNewProjectClientId] = useState<string | undefined>();
   const [isNewClientModalOpen, setIsNewClientModalOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
 
@@ -161,9 +163,8 @@ function MainLayout() {
 
   // Handler: Add New Task
   const handleAddTask = async (newTaskData: Task) => {
-    try {
-      const created = await taskService.create(newTaskData).catch(() => newTaskData);
-      setTasks(prev => [created, ...prev]);
+    const created = await taskService.create(newTaskData);
+    setTasks(prev => [created, ...prev]);
 
       // Notification
       const newNotif: Notification = {
@@ -174,10 +175,7 @@ function MainLayout() {
         read: false,
         type: 'TASK'
       };
-      setNotifications(prev => [newNotif, ...prev]);
-    } catch (err) {
-      console.error('Erro ao criar tarefa:', err);
-    }
+    setNotifications(prev => [newNotif, ...prev]);
   };
 
   const handleOpenNewTaskModal = (context?: { projectId?: string; clientId?: string }) => {
@@ -221,6 +219,39 @@ function MainLayout() {
     setNotifications(prev => [newNotif, ...prev]);
   };
 
+  const handleDeleteTask = async (taskId: string) => {
+    const deleted = await taskService.delete(taskId);
+    if (!deleted) throw new Error('Não foi possível excluir a tarefa.');
+    setTasks(previous => previous.filter(task => task.id !== taskId));
+    setSelectedTask(null);
+    setIsTaskDrawerOpen(false);
+  };
+
+  const handleUpdateProject = async (data: Partial<Project>, teamUserIds?: string[]) => {
+    if (!selectedProject) return;
+    const saved = await projectService.update(selectedProject.id, data, teamUserIds);
+    setProjects(previous => previous.map(project => project.id === saved.id ? saved : project));
+    setSelectedProject(saved);
+  };
+
+  const handleSaveBriefing = async (briefing: Record<string, string>) => {
+    await handleUpdateProject({ briefing });
+  };
+
+  const handleCreateUser = async (data: any) => {
+    const created = await userService.create(data);
+    const saved = data.status === 'INACTIVE'
+      ? await userService.update(created.id, { status: 'INACTIVE' })
+      : created;
+    setUsers(previous => [...previous, saved].sort((a, b) => a.name.localeCompare(b.name)));
+  };
+
+  const handleUpdateUser = async (id: string, data: any) => {
+    const saved = await userService.update(id, data);
+    setUsers(previous => previous.map(user => user.id === id ? saved : user));
+    if (currentUser.id === id) setCurrentUser(saved);
+  };
+
   // Handler: Navigate to Project Detail
   const handleNavigateProjectDetail = (project: Project) => {
     setSelectedProject(project);
@@ -248,11 +279,16 @@ function MainLayout() {
     return <LoginScreen />;
   }
 
+  if (isLoadingData) {
+    return <div className="flex h-screen w-screen items-center justify-center bg-[#09090b] text-zinc-400"><Loader2 size={28} className="animate-spin text-emerald-400" /></div>;
+  }
+
   // Calculate overdue and today counts for badge alerts
-  const todayStr = '2026-09-01';
+  const todayStr = new Date().toISOString().slice(0, 10);
   const overdueCount = tasks.filter(t => t.dueDate < todayStr && t.status !== 'CONCLUIDO').length;
   const todayCount = tasks.filter(t => t.dueDate === todayStr && t.status !== 'CONCLUIDO').length;
-  const canManageCoreRecords = currentUser.role !== 'COLABORADOR';
+  const canCreateProject = currentUser.role !== 'COLABORADOR';
+  const canCreateClient = currentUser.role === 'ADMIN_PRINCIPAL' || currentUser.role === 'ADMIN';
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#09090b] text-zinc-100 font-sans antialiased selection:bg-emerald-500/30 selection:text-emerald-300">
@@ -285,8 +321,8 @@ function MainLayout() {
           onSelectUser={() => undefined}
           onOpenGlobalSearch={() => setIsSearchModalOpen(true)}
           onOpenNewTask={() => setIsNewTaskModalOpen(true)}
-          onOpenNewProject={canManageCoreRecords ? () => setIsNewProjectModalOpen(true) : undefined}
-          onOpenNewClient={canManageCoreRecords ? () => setIsNewClientModalOpen(true) : undefined}
+          onOpenNewProject={canCreateProject ? () => setIsNewProjectModalOpen(true) : undefined}
+          onOpenNewClient={canCreateClient ? () => setIsNewClientModalOpen(true) : undefined}
           overdueCount={overdueCount}
           onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
           notifications={notifications}
@@ -308,7 +344,7 @@ function MainLayout() {
               onToggleComplete={handleToggleComplete}
               onNavigate={(view) => setCurrentView(view)}
               onOpenNewTask={() => setIsNewTaskModalOpen(true)}
-              onOpenNewProject={canManageCoreRecords ? () => setIsNewProjectModalOpen(true) : undefined}
+              onOpenNewProject={canCreateProject ? () => setIsNewProjectModalOpen(true) : undefined}
             />
           )}
 
@@ -331,7 +367,7 @@ function MainLayout() {
               clients={clients}
               tasks={tasks}
               onSelectProject={handleNavigateProjectDetail}
-              onOpenNewProject={canManageCoreRecords ? () => setIsNewProjectModalOpen(true) : undefined}
+              onOpenNewProject={canCreateProject ? () => setIsNewProjectModalOpen(true) : undefined}
             />
           )}
 
@@ -339,10 +375,13 @@ function MainLayout() {
             <ProjectDetailView
               project={selectedProject}
               tasks={tasks}
+              currentUser={currentUser}
               onBack={() => setCurrentView('PROJETOS')}
               onSelectTask={handleSelectTask}
               onToggleComplete={handleToggleComplete}
               onOpenNewTask={() => handleOpenNewTaskModal({ projectId: selectedProject.id, clientId: selectedProject.clientId })}
+              onOpenEditProject={currentUser.role !== 'COLABORADOR' ? () => setIsEditProjectModalOpen(true) : undefined}
+              onSaveBriefing={handleSaveBriefing}
             />
           )}
 
@@ -352,7 +391,7 @@ function MainLayout() {
               projects={projects}
               tasks={tasks}
               onSelectClient={handleNavigateClientDetail}
-              onOpenNewClient={canManageCoreRecords ? () => setIsNewClientModalOpen(true) : undefined}
+              onOpenNewClient={canCreateClient ? () => setIsNewClientModalOpen(true) : undefined}
             />
           )}
 
@@ -366,7 +405,10 @@ function MainLayout() {
               onSelectTask={handleSelectTask}
               onToggleComplete={handleToggleComplete}
               onOpenNewTask={() => handleOpenNewTaskModal({ clientId: selectedClient.id })}
-              onOpenNewProject={canManageCoreRecords ? () => setIsNewProjectModalOpen(true) : undefined}
+              onOpenNewProject={canCreateProject ? () => {
+                setNewProjectClientId(selectedClient.id);
+                setIsNewProjectModalOpen(true);
+              } : undefined}
             />
           )}
 
@@ -374,6 +416,9 @@ function MainLayout() {
             <TeamView
               users={users}
               tasks={tasks}
+              currentUser={currentUser}
+              onCreateUser={handleCreateUser}
+              onUpdateUser={handleUpdateUser}
               onSelectTask={handleSelectTask}
               onToggleComplete={handleToggleComplete}
             />
@@ -468,8 +513,10 @@ function MainLayout() {
         isOpen={isTaskDrawerOpen}
         onClose={() => setIsTaskDrawerOpen(false)}
         onUpdateTask={handleUpdateTask}
+        onDeleteTask={handleDeleteTask}
         currentUser={currentUser}
         users={users}
+        projects={projects}
       />
 
       {/* Creation Modals */}
@@ -490,12 +537,26 @@ function MainLayout() {
 
       <NewProjectModal
         isOpen={isNewProjectModalOpen}
-        onClose={() => setIsNewProjectModalOpen(false)}
+        onClose={() => {
+          setIsNewProjectModalOpen(false);
+          setNewProjectClientId(undefined);
+        }}
         onAddProject={handleAddProject}
         clients={clients}
         users={users}
         currentUser={currentUser}
+        defaultClientId={newProjectClientId}
       />
+
+      {selectedProject && <EditProjectModal
+        isOpen={isEditProjectModalOpen}
+        onClose={() => setIsEditProjectModalOpen(false)}
+        onSave={handleUpdateProject}
+        project={selectedProject}
+        clients={clients}
+        users={users}
+        currentUser={currentUser}
+      />}
 
       <NewClientModal
         isOpen={isNewClientModalOpen}

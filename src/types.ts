@@ -37,6 +37,7 @@ export interface User {
   overdueTasksCount: number;
   next7DaysTasksCount: number;
   status: 'ONLINE' | 'EM_REUNIAO' | 'FOCO' | 'OFFLINE';
+  accountStatus?: 'ACTIVE' | 'INACTIVE';
 }
 
 export type Priority = 'URGENTE' | 'ALTA' | 'NORMAL' | 'BAIXA';
@@ -153,6 +154,8 @@ export interface Task {
   history: TaskHistory[];
   createdBy: string;
   createdAt: string;
+  completedAt?: string;
+  updatedAt?: string;
   tags?: string[];
 }
 
@@ -182,7 +185,15 @@ export interface Project {
   clientName: string;
   managerId: string;
   managerName: string;
+  managerAvatar?: string;
   teamMembers: string[];
+  teamMemberDetails?: Array<{
+    id: string;
+    name: string;
+    avatar: string;
+    position: string;
+    role: string;
+  }>;
   startDate: string;
   dueDate: string;
   progress: number; // 0 to 100
@@ -191,6 +202,7 @@ export interface Project {
   type: ProjectType;
   isRecurring: boolean;
   description: string;
+  briefing?: Record<string, string>;
   tasksCount: number;
   overdueTasksCount: number;
 }

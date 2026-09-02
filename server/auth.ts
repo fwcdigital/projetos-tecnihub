@@ -24,7 +24,7 @@ export function generateToken(payload: { id: string; email: string; role: UserRo
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 }
 
-export function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
+export async function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1]; // Bearer <token>
 
@@ -41,7 +41,7 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
     };
 
     // Validar se o usuário ainda existe e está ativo no banco
-    const user = userRepository.findById(decoded.id);
+    const user = await userRepository.findById(decoded.id);
     if (!user || user.status !== 'ACTIVE') {
       return res.status(403).json({ error: 'Usuário inativo ou não autorizado.' });
     }

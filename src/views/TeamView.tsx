@@ -1,27 +1,43 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Task, User } from '../types';
-import { Users, Search, CheckSquare, Mail, Phone, Clock, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Plus, Pencil } from 'lucide-react';
 import { TaskRow } from '../components/TaskRow';
+import { UserAvatar } from '../components/UserAvatar';
+import { UserManagementModal } from '../components/UserManagementModal';
 
 interface TeamViewProps {
   users: User[];
   tasks: Task[];
   onSelectTask: (task: Task) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
+  currentUser: User;
+  onCreateUser: (data: any) => Promise<void>;
+  onUpdateUser: (id: string, data: any) => Promise<void>;
 }
 
 export const TeamView: React.FC<TeamViewProps> = ({
   users,
   tasks,
   onSelectTask,
-  onToggleComplete
+  onToggleComplete,
+  currentUser,
+  onCreateUser,
+  onUpdateUser
 }) => {
-  const [selectedUser, setSelectedUser] = useState<User>(users[0]);
+  const [selectedUser, setSelectedUser] = useState<User>(users[0] || currentUser);
   const [searchTerm, setSearchTerm] = useState('');
+  const [editingUser, setEditingUser] = useState<User | null | undefined>(undefined);
+  const canManageUsers = currentUser.role === 'ADMIN_PRINCIPAL' || currentUser.role === 'ADMIN';
+  const today = new Date().toISOString().slice(0, 10);
+
+  useEffect(() => {
+    const refreshed = users.find(user => user.id === selectedUser.id);
+    if (refreshed && refreshed !== selectedUser) setSelectedUser(refreshed);
+  }, [selectedUser, users]);
 
   const userTasks = tasks.filter(t => t.assigneeId === selectedUser.id);
-  const overdueCount = userTasks.filter(t => t.dueDate < '2026-09-01' && t.status !== 'CONCLUIDO').length;
-  const todayCount = userTasks.filter(t => t.dueDate === '2026-09-01' && t.status !== 'CONCLUIDO').length;
+  const overdueCount = userTasks.filter(t => t.dueDate < today && t.status !== 'CONCLUIDO').length;
+  const todayCount = userTasks.filter(t => t.dueDate === today && t.status !== 'CONCLUIDO').length;
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6 animate-in fade-in duration-150">
@@ -40,6 +56,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
             Acompanhe a distribuição de demandas operacionais e disponibilidade de cada colaborador.
           </p>
         </div>
+        {canManageUsers && <button onClick={() => setEditingUser(null)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white text-zinc-950 text-xs font-bold"><Plus size={14} />Novo usuário</button>}
       </div>
 
       {/* Team Cards Grid */}
@@ -60,7 +77,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
             >
               <div className="flex items-center gap-2.5">
                 <div className="relative">
-                  <img src={user.avatar} alt={user.name} className="w-10 h-10 rounded-full object-cover border border-zinc-700" />
+                  <UserAvatar name={user.name} src={user.avatar} className="w-10 h-10" />
                   <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-black ${
                     user.status === 'ONLINE' ? 'bg-emerald-400' : user.status === 'FOCO' ? 'bg-purple-400' : 'bg-amber-400'
                   }`} />
@@ -84,7 +101,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
       <div className="space-y-4 pt-2">
         <div className="p-4 rounded-2xl bg-[#121216] border border-zinc-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <img src={selectedUser.avatar} alt={selectedUser.name} className="w-12 h-12 rounded-full object-cover border border-zinc-700" />
+            <UserAvatar name={selectedUser.name} src={selectedUser.avatar} className="w-12 h-12" />
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-white">{selectedUser.name}</h2>
@@ -97,6 +114,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
           </div>
 
           <div className="flex items-center gap-3 text-xs">
+            {canManageUsers && (currentUser.role === 'ADMIN_PRINCIPAL' || selectedUser.role !== 'ADMIN_PRINCIPAL') && <button onClick={() => setEditingUser(selectedUser)} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-200"><Pencil size={12} />Editar</button>}
             <div className="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800">
               <span className="text-[10px] text-zinc-500 block">Total Atribuídas</span>
               <strong className="text-white font-mono">{userTasks.length}</strong>
@@ -138,6 +156,13 @@ export const TeamView: React.FC<TeamViewProps> = ({
           )}
         </div>
       </div>
+      <UserManagementModal
+        isOpen={editingUser !== undefined}
+        onClose={() => setEditingUser(undefined)}
+        currentUser={currentUser}
+        user={editingUser || undefined}
+        onSave={async data => editingUser ? onUpdateUser(editingUser.id, data) : onCreateUser(data)}
+      />
     </div>
   );
 };

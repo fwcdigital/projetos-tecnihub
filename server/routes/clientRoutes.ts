@@ -1,20 +1,21 @@
 import { Router, Response } from 'express';
-import { clientRepository, projectRepository, ClientStatus } from '../db.js';
+import { clientRepository, projectRepository, userRepository, ClientStatus } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
+import { isUuid } from '../validation.js';
 
 export const clientRouter = Router();
 
 // GET /api/clients - Listar todos os clientes
-clientRouter.get('/', authenticateToken, (req: AuthRequest, res: Response) => {
+clientRouter.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { status, search } = req.query;
-    const clients = clientRepository.findAll({
+    const clients = await clientRepository.findAll(req.user, {
       status: status as ClientStatus,
       search: search as string
     });
 
     // Calcular contagens reais de projetos para cada cliente
-    const allProjects = projectRepository.findAll(req.user);
+    const allProjects = await projectRepository.findAll(req.user);
     const enrichedClients = clients.map(client => {
       const clientProjects = allProjects.filter(p => p.client_id === client.id);
       const activeProjectsCount = clientProjects.filter(p => p.status !== 'COMPLETED' && p.status !== 'CANCELLED').length;
@@ -35,14 +36,17 @@ clientRouter.get('/', authenticateToken, (req: AuthRequest, res: Response) => {
 });
 
 // GET /api/clients/:id - Detalhes do cliente e projetos vinculados
-clientRouter.get('/:id', authenticateToken, (req: AuthRequest, res: Response) => {
+clientRouter.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const client = clientRepository.findById(req.params.id);
+    if (!isUuid(req.params.id)) {
+      return res.status(404).json({ error: 'Cliente não encontrado.' });
+    }
+    const client = await clientRepository.findById(req.params.id, req.user);
     if (!client) {
       return res.status(404).json({ error: 'Cliente não encontrado.' });
     }
 
-    const projects = projectRepository.findAll(req.user, { clientId: client.id });
+    const projects = await projectRepository.findAll(req.user, { clientId: client.id });
     const activeProjectsCount = projects.filter(p => p.status !== 'COMPLETED' && p.status !== 'CANCELLED').length;
     const completedProjectsCount = projects.filter(p => p.status === 'COMPLETED').length;
 
@@ -60,12 +64,21 @@ clientRouter.get('/:id', authenticateToken, (req: AuthRequest, res: Response) =>
 });
 
 // POST /api/clients - Cadastrar novo cliente
-clientRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER']), (req: AuthRequest, res: Response) => {
+clientRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
     const { name, company_name, contact_name, email, phone, status, lead_manager_id, notes, monthly_services, logo } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'O nome do cliente é obrigatório.' });
+    }
+
+    const chosenLeadManagerId = lead_manager_id || req.user?.id;
+    if (!isUuid(chosenLeadManagerId)) {
+      return res.status(400).json({ error: 'O gestor da conta é inválido.' });
+    }
+    const leadManager = chosenLeadManagerId ? await userRepository.findById(chosenLeadManagerId) : null;
+    if (!leadManager || leadManager.status !== 'ACTIVE' || leadManager.role === 'COLLABORATOR') {
+      return res.status(400).json({ error: 'O gestor da conta é inválido ou está inativo.' });
     }
 
     const initials = name
@@ -76,7 +89,7 @@ clientRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', '
       .join('')
       .toUpperCase() || 'CL';
 
-    const newClient = clientRepository.create({
+    const newClient = await clientRepository.create({
       name: name.trim(),
       company_name: company_name ? company_name.trim() : name.trim(),
       logo: logo || initials,
@@ -84,7 +97,7 @@ clientRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', '
       email: email ? email.trim() : '',
       phone: phone ? phone.trim() : '',
       status: (status as ClientStatus) || 'ACTIVE',
-      lead_manager_id: lead_manager_id || req.user?.id,
+      lead_manager_id: chosenLeadManagerId,
       notes: notes || '',
       monthly_services: Array.isArray(monthly_services) ? monthly_services : []
     });
@@ -100,14 +113,28 @@ clientRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', '
 });
 
 // PUT /api/clients/:id - Editar cliente
-clientRouter.put('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER']), (req: AuthRequest, res: Response) => {
+clientRouter.put('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER']), async (req: AuthRequest, res: Response) => {
   try {
     const { name, company_name, contact_name, email, phone, status, lead_manager_id, notes, monthly_services, logo } = req.body;
     const clientId = req.params.id;
 
-    const existing = clientRepository.findById(clientId);
+    if (!isUuid(clientId)) {
+      return res.status(404).json({ error: 'Cliente não encontrado.' });
+    }
+
+    const existing = await clientRepository.findById(clientId, req.user);
     if (!existing) {
       return res.status(404).json({ error: 'Cliente não encontrado.' });
+    }
+
+    if (lead_manager_id) {
+      if (!isUuid(lead_manager_id)) {
+        return res.status(400).json({ error: 'O gestor da conta é inválido.' });
+      }
+      const leadManager = await userRepository.findById(lead_manager_id);
+      if (!leadManager || leadManager.status !== 'ACTIVE' || leadManager.role === 'COLLABORATOR') {
+        return res.status(400).json({ error: 'O gestor da conta é inválido ou está inativo.' });
+      }
     }
 
     const updates: any = {};
@@ -122,7 +149,7 @@ clientRouter.put('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN',
     if (monthly_services !== undefined) updates.monthly_services = monthly_services;
     if (logo !== undefined) updates.logo = logo;
 
-    const updated = clientRepository.update(clientId, updates);
+    const updated = await clientRepository.update(clientId, updates);
 
     return res.json({
       message: 'Cliente atualizado com sucesso.',
@@ -134,9 +161,12 @@ clientRouter.put('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN',
 });
 
 // DELETE /api/clients/:id - Arquivar cliente (Soft Delete)
-clientRouter.delete('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), (req: AuthRequest, res: Response) => {
+clientRouter.delete('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
-    const archived = clientRepository.archive(req.params.id);
+    if (!isUuid(req.params.id)) {
+      return res.status(404).json({ error: 'Cliente não encontrado.' });
+    }
+    const archived = await clientRepository.archive(req.params.id);
     if (!archived) {
       return res.status(404).json({ error: 'Cliente não encontrado.' });
     }

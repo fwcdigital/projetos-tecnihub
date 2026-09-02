@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Project, Task, User, Client } from '../types';
 import { TaskRow } from '../components/TaskRow';
 import { StatusBadge } from '../components/StatusBadge';
@@ -19,6 +19,8 @@ import {
   Layers,
   Kanban
 } from 'lucide-react';
+import { Pencil, Save } from 'lucide-react';
+import { UserAvatar } from '../components/UserAvatar';
 
 interface ProjectDetailViewProps {
   project: Project;
@@ -27,6 +29,9 @@ interface ProjectDetailViewProps {
   onSelectTask: (task: Task) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
   onOpenNewTask: () => void;
+  currentUser: User;
+  onOpenEditProject?: () => void;
+  onSaveBriefing: (briefing: Record<string, string>) => Promise<void>;
 }
 
 export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
@@ -35,9 +40,24 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   onBack,
   onSelectTask,
   onToggleComplete,
-  onOpenNewTask
+  onOpenNewTask,
+  currentUser,
+  onOpenEditProject,
+  onSaveBriefing
 }) => {
   const [activeTab, setActiveTab] = useState<'ALL' | 'TODO' | 'PROGRESS' | 'DONE' | 'DOCS'>('ALL');
+  const [briefing, setBriefing] = useState<Record<string, string>>({});
+  const [savingBriefing, setSavingBriefing] = useState(false);
+  const canEdit = currentUser.role !== 'COLABORADOR';
+
+  useEffect(() => {
+    setBriefing({
+      objective: project.briefing?.objective || project.description,
+      audience: project.briefing?.audience || '',
+      channels: project.briefing?.channels || '',
+      technology: project.briefing?.technology || ''
+    });
+  }, [project]);
 
   const projectTasks = tasks.filter(t => t.projectId === project.id);
   
@@ -49,7 +69,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   });
 
   const completedCount = projectTasks.filter(t => t.status === 'CONCLUIDO').length;
-  const overdueCount = projectTasks.filter(t => t.dueDate < '2026-09-01' && t.status !== 'CONCLUIDO').length;
+  const overdueCount = projectTasks.filter(t => t.dueDate < new Date().toISOString().slice(0, 10) && t.status !== 'CONCLUIDO').length;
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6 animate-in fade-in duration-150">
@@ -63,13 +83,10 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
           <span>Voltar para Todos os Projetos</span>
         </button>
 
-        <button
-          onClick={onOpenNewTask}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-zinc-950 hover:bg-zinc-100 text-xs font-bold shadow-sm transition-colors"
-        >
-          <Plus size={14} />
-          <span>+ Adicionar Tarefa ao Projeto</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {onOpenEditProject && <button onClick={onOpenEditProject} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs font-semibold"><Pencil size={13} />Editar projeto</button>}
+          <button onClick={onOpenNewTask} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-zinc-950 hover:bg-zinc-100 text-xs font-bold shadow-sm transition-colors"><Plus size={14} /><span>+ Nova tarefa</span></button>
+        </div>
       </div>
 
       {/* Project Banner & Key Metadata */}
@@ -116,7 +133,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
           <div>
             <span className="text-[10px] uppercase font-bold text-zinc-500 block mb-0.5">Gestor</span>
             <div className="flex items-center gap-1.5 font-medium text-zinc-200">
-              <UserIcon size={12} className="text-zinc-500" />
+              <UserAvatar name={project.managerName} src={project.managerAvatar} className="w-5 h-5" />
               <span>{project.managerName}</span>
             </div>
           </div>
@@ -131,9 +148,9 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
           <div>
             <span className="text-[10px] uppercase font-bold text-zinc-500 block mb-0.5">Equipe</span>
-            <div className="flex items-center gap-1 text-zinc-300">
-              <Users size={12} className="text-zinc-500" />
-              <span>{project.teamMembers.join(', ')}</span>
+            <div className="flex items-center -space-x-1">
+              {(project.teamMemberDetails || []).map(member => <UserAvatar key={member.id} name={member.name} src={member.avatar} className="w-6 h-6" title={`${member.name} — ${member.position}`} />)}
+              {(project.teamMemberDetails || []).length === 0 && <span className="text-zinc-400">Sem colaboradores</span>}
             </div>
           </div>
 
@@ -190,6 +207,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
             Briefing & Escopo
           </button>
         </div>
+        {activeTab !== 'DOCS' && <button onClick={onOpenNewTask} className="hidden sm:flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white text-zinc-950 text-xs font-bold"><Plus size={13} />Nova tarefa</button>}
       </div>
 
       {/* Tab Content */}
@@ -216,11 +234,12 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
             <FileText size={16} className="text-sky-400" />
             Documentação do Escopo & Diretrizes de Criação
           </h3>
-          <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800 space-y-2 text-zinc-300 leading-relaxed">
-            <p><strong>Objetivo Principal:</strong> {project.description}</p>
-            <p><strong>Público-Alvo:</strong> Clientes qualificados B2B e consumidores finais da região metropolitana.</p>
-            <p><strong>Canais de Conversão:</strong> Formulários de alta taxa de conversão integrados ao CRM e WhatsApp Direto.</p>
-            <p><strong>Stack Tecnológica:</strong> React, Next.js, Tailwind CSS, Google Tag Manager, Google Analytics 4, Meta Pixel API.</p>
+          <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800 space-y-3 text-zinc-300 leading-relaxed">
+            {[
+              ['objective', 'Objetivo Principal'], ['audience', 'Público-Alvo'],
+              ['channels', 'Canais de Conversão'], ['technology', 'Stack Tecnológica']
+            ].map(([key, label]) => <label key={key} className="block"><strong className="block mb-1">{label}</strong><textarea disabled={!canEdit} rows={2} value={briefing[key] || ''} onChange={event => setBriefing(previous => ({ ...previous, [key]: event.target.value }))} className="w-full bg-[#15151a] border border-zinc-700 rounded-lg p-2 text-zinc-200 disabled:border-transparent disabled:bg-transparent resize-none" /></label>)}
+            {canEdit && <div className="flex justify-end"><button disabled={savingBriefing} onClick={async () => { setSavingBriefing(true); try { await onSaveBriefing(briefing); } finally { setSavingBriefing(false); } }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white text-zinc-950 font-bold disabled:opacity-50"><Save size={13} />{savingBriefing ? 'Salvando...' : 'Salvar briefing'}</button></div>}
           </div>
         </div>
       )}

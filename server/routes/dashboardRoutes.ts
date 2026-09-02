@@ -5,11 +5,11 @@ import { authenticateToken, AuthRequest } from '../auth.js';
 export const dashboardRouter = Router();
 
 // GET /api/dashboard/stats - Métricas e dados reais do banco
-dashboardRouter.get('/stats', authenticateToken, (req: AuthRequest, res: Response) => {
+dashboardRouter.get('/stats', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const user = req.user;
-    const clients = clientRepository.findAll({ status: 'ACTIVE' });
-    const userProjects = projectRepository.findAll(user);
+    const clients = await clientRepository.findAll(user, { status: 'ACTIVE' });
+    const userProjects = await projectRepository.findAll(user);
 
     const activeProjects = userProjects.filter(p => p.status !== 'COMPLETED' && p.status !== 'CANCELLED');
     const inProgressProjects = userProjects.filter(p => p.status === 'IN_PROGRESS');
@@ -20,7 +20,7 @@ dashboardRouter.get('/stats', authenticateToken, (req: AuthRequest, res: Respons
     const totalProjects = userProjects.length;
 
     // Resumo de usuários para administradores e gestores
-    const allUsers = userRepository.findAll();
+    const allUsers = await userRepository.findAll();
     const activeUsersCount = allUsers.filter(u => u.status === 'ACTIVE').length;
 
     return res.json({

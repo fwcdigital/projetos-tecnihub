@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { StatusBadge } from '../components/StatusBadge';
 import { PriorityBadge } from '../components/PriorityBadge';
+import { UserAvatar } from '../components/UserAvatar';
 
 interface DashboardViewProps {
   currentUser: User;
@@ -482,7 +483,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </div>
 
                   <div className="flex items-center justify-between text-[10px] text-zinc-400 pt-0.5">
-                    <span>{proj.clientName} • Gestor: {proj.managerName.split(' ')[0]}</span>
+                    <span className="flex items-center gap-1"><UserAvatar name={proj.managerName} src={proj.managerAvatar} className="w-4 h-4" />{proj.clientName} • {proj.managerName.split(' ')[0]}</span>
                     <span>Prazo: {proj.dueDate.split('-').reverse().slice(0, 2).join('/')}</span>
                   </div>
                 </div>

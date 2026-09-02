@@ -15,6 +15,7 @@ import {
   Building2,
   Calendar
 } from 'lucide-react';
+import { UserAvatar } from './UserAvatar';
 
 interface TaskRowProps {
   task: Task;
@@ -37,11 +38,12 @@ export const TaskRow: React.FC<TaskRowProps> = ({
 
   // Format date helper and alert condition
   const getDueDateDisplay = () => {
-    // Current simulated date is 2026-09-01
-    const todayStr = '2026-09-01';
+    const todayStr = new Date().toISOString().slice(0, 10);
     const isOverdue = task.dueDate < todayStr && !isCompleted;
     const isToday = task.dueDate === todayStr;
-    const isTomorrow = task.dueDate === '2026-09-02';
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const isTomorrow = task.dueDate === tomorrow.toISOString().slice(0, 10);
 
     let dateText = task.dueDate.split('-').reverse().slice(0, 2).join('/');
     if (isToday) dateText = 'Hoje';
@@ -184,11 +186,7 @@ export const TaskRow: React.FC<TaskRowProps> = ({
 
         {/* Assignee Avatar & Tooltip */}
         <div className="flex items-center gap-1.5 flex-shrink-0" title={`Responsável: ${task.assigneeName}`}>
-          <img
-            src={task.assigneeAvatar}
-            alt={task.assigneeName}
-            className="w-5 h-5 rounded-full object-cover border border-zinc-700 flex-shrink-0"
-          />
+          <UserAvatar name={task.assigneeName} src={task.assigneeAvatar} className="w-5 h-5" />
           <span className="text-[11px] text-zinc-300 font-medium hidden lg:inline max-w-[80px] truncate">
             {task.assigneeName.split(' ')[0]}
           </span>

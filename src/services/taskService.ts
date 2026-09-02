@@ -74,12 +74,7 @@ export const taskService = {
 
   // Excluir tarefa
   delete: async (id: string): Promise<boolean> => {
-    try {
-      const response = await api.delete<{ success: boolean }>(`/api/tasks/${id}`);
-      return Boolean(response?.success);
-    } catch (error) {
-      console.error(`Erro ao excluir tarefa ${id}:`, error);
-      return false;
-    }
+    const response = await api.delete<{ success: boolean }>(`/api/tasks/${id}`);
+    return Boolean(response?.success);
   }
 };
