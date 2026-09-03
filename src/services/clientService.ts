@@ -31,7 +31,7 @@ export const clientService = {
       statusRelationship: (c.status === 'ACTIVE' ? 'ATIVO' : c.status === 'ARCHIVED' ? 'PAUSADO' : 'ONBOARDING') as any,
       notes: c.notes || '',
       monthlyServices: c.monthly_services || [],
-      createdAt: c.created_at || '2026-09-01'
+      createdAt: c.created_at || ''
     }));
   },
 
@@ -54,7 +54,7 @@ export const clientService = {
       statusRelationship: (c.status === 'ACTIVE' ? 'ATIVO' : c.status === 'ARCHIVED' ? 'PAUSADO' : 'ONBOARDING') as any,
       notes: c.notes || '',
       monthlyServices: c.monthly_services || [],
-      createdAt: c.created_at || '2026-09-01'
+      createdAt: c.created_at || ''
     };
   },
 
@@ -90,7 +90,7 @@ export const clientService = {
       statusRelationship: 'ATIVO',
       notes: c.notes || '',
       monthlyServices: c.monthly_services || [],
-      createdAt: c.created_at || '2026-09-01'
+      createdAt: c.created_at || ''
     };
   },
 
@@ -125,7 +125,7 @@ export const clientService = {
       statusRelationship: (c.status === 'ACTIVE' ? 'ATIVO' : 'PAUSADO') as any,
       notes: c.notes || '',
       monthlyServices: c.monthly_services || [],
-      createdAt: c.created_at || '2026-09-01'
+      createdAt: c.created_at || ''
     };
   },
 

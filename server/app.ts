@@ -7,6 +7,8 @@ import { clientRouter } from './routes/clientRoutes.js';
 import { projectRouter } from './routes/projectRoutes.js';
 import { dashboardRouter } from './routes/dashboardRoutes.js';
 import { taskRouter } from './routes/taskRoutes.js';
+import { routineRouter } from './routes/routineRoutes.js';
+import { projectStatusRouter } from './routes/projectStatusRoutes.js';
 
 export async function createApiApp(): Promise<Express> {
   const app = express();
@@ -28,8 +30,10 @@ export async function createApiApp(): Promise<Express> {
   app.use('/api/users', userRouter);
   app.use('/api/clients', clientRouter);
   app.use('/api/projects', projectRouter);
+  app.use('/api/project-statuses', projectStatusRouter);
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/tasks', taskRouter);
+  app.use('/api/routines', routineRouter);
 
   return app;
 }

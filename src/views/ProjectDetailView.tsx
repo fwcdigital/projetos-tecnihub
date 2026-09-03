@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Project, Task, User, Client } from '../types';
+import { Project, ProjectStatusDefinition, Task, User } from '../types';
 import { TaskRow } from '../components/TaskRow';
 import { CompletedTasksSection } from '../components/CompletedTasksSection';
-import { StatusBadge } from '../components/StatusBadge';
-import { PriorityBadge } from '../components/PriorityBadge';
+import { PriorityPicker } from '../components/PriorityPicker';
+import { StatusPicker } from '../components/StatusPicker';
 import { 
   ArrowLeft, 
   Plus, 
@@ -18,40 +18,63 @@ import {
   FileText, 
   Sparkles,
   Layers,
-  Kanban
+  Kanban,
+  ExternalLink,
+  Link2,
+  Trash2,
+  Upload,
+  Loader2
 } from 'lucide-react';
 import { Pencil, Save } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
+import { projectService } from '../services/projectService';
+import { canManageProjectOperations } from '../permissions';
+import { getProjectStatusOptions } from '../components/visualTokens';
 
 interface ProjectDetailViewProps {
   project: Project;
+  projects: Project[];
   tasks: Task[];
   completedTasks: Task[];
   onBack: () => void;
   onSelectTask: (task: Task) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
+  onUpdateTask: (task: Task) => void;
   onOpenNewTask: () => void;
   currentUser: User;
   onOpenEditProject?: () => void;
   onSaveBriefing: (briefing: Record<string, string>) => Promise<void>;
+  onProjectRefresh: () => Promise<void>;
+  projectStatuses: ProjectStatusDefinition[];
+  onUpdateProject: (project: Project, updates: Partial<Project>, teamUserIds?: string[]) => Promise<void>;
 }
 
 export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   project,
+  projects,
   tasks,
   completedTasks,
   onBack,
   onSelectTask,
   onToggleComplete,
+  onUpdateTask,
   onOpenNewTask,
   currentUser,
   onOpenEditProject,
-  onSaveBriefing
+  onSaveBriefing,
+  onProjectRefresh,
+  projectStatuses,
+  onUpdateProject
 }) => {
   const [activeTab, setActiveTab] = useState<'ALL' | 'TODO' | 'PROGRESS' | 'DOCS'>('ALL');
   const [briefing, setBriefing] = useState<Record<string, string>>({});
   const [savingBriefing, setSavingBriefing] = useState(false);
+  const [driveName, setDriveName] = useState('');
+  const [driveUrl, setDriveUrl] = useState('');
+  const [resourceBusy, setResourceBusy] = useState(false);
+  const [resourceError, setResourceError] = useState('');
   const canEdit = currentUser.role !== 'COLABORADOR';
+  const canManageProject = canManageProjectOperations(currentUser.role);
 
   useEffect(() => {
     setBriefing({
@@ -101,7 +124,8 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 text-xs font-medium border border-zinc-700">
                 {project.clientName}
               </span>
-              <StatusBadge status={project.status} size="sm" />
+              <StatusPicker value={project.status} options={getProjectStatusOptions(projectStatuses, { value: project.status, label: project.statusName, color: project.statusColor })} onChange={canManageProject ? status => void onUpdateProject(project, { status }) : undefined} ariaLabel={`Alterar status de ${project.name}`} />
+              <PriorityPicker value={project.priority} onChange={canManageProject ? priority => void onUpdateProject(project, { priority }) : undefined} />
               {project.isRecurring && (
                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[10px] border border-emerald-500/20 font-medium">
                   <Repeat size={10} />
@@ -146,7 +170,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
             <span className="text-[10px] uppercase font-bold text-zinc-500 block mb-0.5">Prazo de Entrega</span>
             <div className="flex items-center gap-1.5 font-mono text-zinc-200">
               <Calendar size={12} className="text-zinc-500" />
-              <span>{project.dueDate.split('-').reverse().join('/')}</span>
+              <span>{project.dueDate ? project.dueDate.split('-').reverse().join('/') : 'Sem prazo definido'}</span>
             </div>
           </div>
 
@@ -219,7 +243,9 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                 key={task.id}
                 task={task}
                 onSelectTask={onSelectTask}
-                onToggleComplete={onToggleComplete}
+                    onToggleComplete={onToggleComplete}
+                onUpdateTask={onUpdateTask}
+                projects={projects}
               />
             ))
           )}
@@ -227,6 +253,8 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
             tasks={projectCompletedTasks}
             onSelectTask={onSelectTask}
             onToggleComplete={onToggleComplete}
+            onUpdateTask={onUpdateTask}
+            projects={projects}
             contextKey={project.id}
           />
         </div>
@@ -242,6 +270,13 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               ['channels', 'Canais de Conversão'], ['technology', 'Stack Tecnológica']
             ].map(([key, label]) => <label key={key} className="block"><strong className="block mb-1">{label}</strong><textarea disabled={!canEdit} rows={2} value={briefing[key] || ''} onChange={event => setBriefing(previous => ({ ...previous, [key]: event.target.value }))} className="w-full bg-[#15151a] border border-zinc-700 rounded-lg p-2 text-zinc-200 disabled:border-transparent disabled:bg-transparent resize-none" /></label>)}
             {canEdit && <div className="flex justify-end"><button disabled={savingBriefing} onClick={async () => { setSavingBriefing(true); try { await onSaveBriefing(briefing); } finally { setSavingBriefing(false); } }} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white text-zinc-950 font-bold disabled:opacity-50"><Save size={13} />{savingBriefing ? 'Salvando...' : 'Salvar briefing'}</button></div>}
+          </div>
+          <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
+            <div className="flex items-center justify-between"><div><h4 className="font-bold text-zinc-200">Materiais de apoio</h4><p className="text-[10px] text-zinc-500">PDF, DOCX ou link do Google Drive</p></div>{canEdit && <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-semibold text-zinc-200 hover:bg-zinc-700"><Upload size={13} />Enviar arquivo<input type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="hidden" onChange={async event => { const file = event.target.files?.[0]; if (!file) return; setResourceBusy(true); setResourceError(''); try { await projectService.uploadResource(project.id, file); await onProjectRefresh(); } catch (error: any) { setResourceError(error.message); } finally { setResourceBusy(false); event.target.value = ''; } }} /></label>}</div>
+            {canEdit && <form onSubmit={async event => { event.preventDefault(); if (!driveUrl.trim()) return; setResourceBusy(true); setResourceError(''); try { await projectService.addDriveResource(project.id, driveName, driveUrl); setDriveName(''); setDriveUrl(''); await onProjectRefresh(); } catch (error: any) { setResourceError(error.message); } finally { setResourceBusy(false); } }} className="grid grid-cols-1 gap-2 sm:grid-cols-[160px_1fr_auto]"><input value={driveName} onChange={event => setDriveName(event.target.value)} placeholder="Nome do material" className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200 outline-none" /><input value={driveUrl} onChange={event => setDriveUrl(event.target.value)} placeholder="https://drive.google.com/..." className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200 outline-none" /><button disabled={resourceBusy} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-zinc-800 px-3 py-2 font-semibold text-zinc-200 disabled:opacity-50"><Link2 size={13} />Adicionar link</button></form>}
+            {resourceError && <p className="text-[11px] text-rose-400">{resourceError}</p>}
+            {resourceBusy && <p className="flex items-center gap-1.5 text-[11px] text-zinc-500"><Loader2 size={12} className="animate-spin" />Salvando material...</p>}
+            <div className="divide-y divide-zinc-800">{(project.resources || []).map(resource => <div key={resource.id} className="flex items-center gap-3 py-2"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-800 text-zinc-400">{resource.kind === 'FILE' ? <FileText size={14} /> : <Link2 size={14} />}</span><button type="button" onClick={() => void projectService.openResource(project.id, resource)} className="min-w-0 flex-1 text-left"><span className="block truncate text-xs font-semibold text-zinc-200">{resource.name}</span><span className="text-[10px] text-zinc-500">{resource.kind === 'FILE' ? resource.mimeType : 'Google Drive'}</span></button><button type="button" onClick={() => void projectService.openResource(project.id, resource)} className="text-zinc-500 hover:text-white"><ExternalLink size={13} /></button>{canEdit && <button type="button" onClick={async () => { if (!window.confirm(`Remover ${resource.name}?`)) return; await projectService.deleteResource(project.id, resource.id); await onProjectRefresh(); }} className="text-zinc-600 hover:text-rose-400"><Trash2 size={13} /></button>}</div>)}{(project.resources || []).length === 0 && <p className="py-5 text-center text-[11px] text-zinc-600">Nenhum material vinculado.</p>}</div>
           </div>
         </div>
       )}

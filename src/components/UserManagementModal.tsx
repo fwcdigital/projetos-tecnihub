@@ -6,7 +6,7 @@ import { UserAvatar } from './UserAvatar';
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (data: { name: string; email: string; password?: string; role: UserRole; job_title: string; avatar: string; status: 'ACTIVE' | 'INACTIVE' }) => Promise<void>;
+  onSave: (data: { name: string; email: string; password?: string; role?: UserRole; job_title: string; avatar: string; status: 'ACTIVE' | 'INACTIVE' }) => Promise<void>;
   currentUser: User;
   user?: User | null;
 }
@@ -21,6 +21,7 @@ export const UserManagementModal: React.FC<Props> = ({ isOpen, onClose, onSave, 
   const [status, setStatus] = useState<'ACTIVE' | 'INACTIVE'>('ACTIVE');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const isSelf = Boolean(user && user.id === currentUser.id);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -44,7 +45,7 @@ export const UserManagementModal: React.FC<Props> = ({ isOpen, onClose, onSave, 
     setSaving(true);
     setError(null);
     try {
-      await onSave({ name: name.trim(), email: email.trim(), password: password || undefined, role, job_title: jobTitle.trim(), avatar: avatar.trim(), status });
+      await onSave({ name: name.trim(), email: email.trim(), password: password || undefined, ...(!isSelf ? { role } : {}), job_title: jobTitle.trim(), avatar: avatar.trim(), status });
       onClose();
     } catch (saveError: any) {
       setError(saveError.message || 'Não foi possível salvar o usuário.');
@@ -61,7 +62,7 @@ export const UserManagementModal: React.FC<Props> = ({ isOpen, onClose, onSave, 
       <form onSubmit={submit} className="p-5 space-y-4 text-xs">
         <div className="flex items-center gap-3"><UserAvatar name={name || 'Novo usuário'} src={avatar} className="w-12 h-12" /><div className="flex-1"><label className="text-zinc-400">URL do avatar/foto</label><input value={avatar} onChange={event => setAvatar(event.target.value)} placeholder="Opcional — fallback com iniciais" className="mt-1 w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200" /></div></div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><label className="text-zinc-400">Nome<input value={name} onChange={event => setName(event.target.value)} className="mt-1 w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200" /></label><label className="text-zinc-400">E-mail<input type="email" value={email} onChange={event => setEmail(event.target.value)} className="mt-1 w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200" /></label></div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><label className="text-zinc-400">Cargo<input value={jobTitle} onChange={event => setJobTitle(event.target.value)} className="mt-1 w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200" /></label><label className="text-zinc-400">Perfil<select value={role} onChange={event => setRole(event.target.value as UserRole)} className="mt-1 w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200">{currentUser.role === 'ADMIN_PRINCIPAL' && <option value="ADMIN_PRINCIPAL">SUPER_ADMIN</option>}<option value="ADMIN">ADMIN</option><option value="GESTOR_PROJETO">PROJECT_MANAGER</option><option value="COLABORADOR">COLLABORATOR</option></select></label></div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><label className="text-zinc-400">Cargo<input value={jobTitle} onChange={event => setJobTitle(event.target.value)} className="mt-1 w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200" /></label><label className="text-zinc-400">Perfil<select value={role} disabled={isSelf} onChange={event => setRole(event.target.value as UserRole)} className="mt-1 w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 disabled:cursor-not-allowed disabled:opacity-60">{currentUser.role === 'ADMIN_PRINCIPAL' && <option value="ADMIN_PRINCIPAL">SUPER_ADMIN</option>}<option value="ADMIN">ADMIN</option><option value="GESTOR_PROJETO">PROJECT_MANAGER</option><option value="COLABORADOR">COLLABORATOR</option></select>{isSelf && <span className="mt-1 block text-[10px] text-zinc-500">Você não pode alterar o próprio perfil de acesso.</span>}</label></div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><label className="text-zinc-400">{user ? 'Nova senha (opcional)' : 'Senha inicial'}<input type="password" value={password} onChange={event => setPassword(event.target.value)} className="mt-1 w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200" /></label><label className="text-zinc-400">Situação<select value={status} onChange={event => setStatus(event.target.value as 'ACTIVE' | 'INACTIVE')} className="mt-1 w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200"><option value="ACTIVE">Ativo</option><option value="INACTIVE">Inativo</option></select></label></div>
         <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800"><button type="button" onClick={onClose} className="px-4 py-2 rounded-lg bg-zinc-800 text-zinc-300">Cancelar</button><button disabled={saving} className="px-4 py-2 rounded-lg bg-white text-zinc-950 font-bold disabled:opacity-50">{saving ? <Loader2 size={14} className="animate-spin" /> : 'Salvar usuário'}</button></div>
       </form>

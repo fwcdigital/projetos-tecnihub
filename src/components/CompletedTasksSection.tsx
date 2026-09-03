@@ -1,20 +1,24 @@
 import React, { useEffect, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { Task } from '../types';
+import { Project, Task } from '../types';
 import { TaskRow } from './TaskRow';
 
 interface CompletedTasksSectionProps {
   tasks: Task[];
   onSelectTask: (task: Task) => void;
   onToggleComplete: (taskId: string, event: React.MouseEvent) => void;
+  onUpdateTask?: (task: Task) => void;
   contextKey?: string;
+  projects?: Project[];
 }
 
 export const CompletedTasksSection: React.FC<CompletedTasksSectionProps> = ({
   tasks,
   onSelectTask,
   onToggleComplete,
-  contextKey
+  onUpdateTask,
+  contextKey,
+  projects = []
 }) => {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -49,6 +53,8 @@ export const CompletedTasksSection: React.FC<CompletedTasksSectionProps> = ({
               task={task}
               onSelectTask={onSelectTask}
               onToggleComplete={onToggleComplete}
+              onUpdateTask={onUpdateTask}
+              projects={projects}
             />
           ))}
         </div>

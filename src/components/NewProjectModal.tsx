@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Client, Priority, Project, ProjectStatus, ProjectType, User } from '../types';
-import { X, FolderPlus, Building2, User as UserIcon, Calendar, Repeat, Loader2, AlertCircle } from 'lucide-react';
+import { Client, Priority, Project, ProjectStatus, ProjectStatusDefinition, ProjectType, User } from '../types';
+import { X, FolderPlus, Building2, User as UserIcon, Repeat, Loader2, AlertCircle } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
+import { DateTimePicker } from './DateTimePicker';
+import { isAdministrator } from '../permissions';
+import { PriorityPicker } from './PriorityPicker';
+import { StatusPicker } from './StatusPicker';
+import { getProjectStatusOptions } from './visualTokens';
 
 interface NewProjectModalProps {
   isOpen: boolean;
@@ -11,6 +16,7 @@ interface NewProjectModalProps {
   users: User[];
   currentUser: User;
   defaultClientId?: string;
+  projectStatuses: ProjectStatusDefinition[];
 }
 
 export const NewProjectModal: React.FC<NewProjectModalProps> = ({
@@ -20,18 +26,18 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
   clients,
   users,
   currentUser,
-  defaultClientId
+  defaultClientId,
+  projectStatuses
 }) => {
-  if (!isOpen) return null;
-
   const [name, setName] = useState('');
   const [clientId, setClientId] = useState(defaultClientId || clients[0]?.id || '');
   const [managerId, setManagerId] = useState(currentUser.id);
   const [type, setType] = useState<ProjectType>('SITE');
-  const [status, setStatus] = useState<ProjectStatus>('PLANEJAMENTO');
+  const [status, setStatus] = useState<ProjectStatus>(projectStatuses[0]?.id || 'PLANEJAMENTO');
   const [priority, setPriority] = useState<Priority>('ALTA');
-  const [startDate, setStartDate] = useState('2026-09-01');
-  const [dueDate, setDueDate] = useState('2026-10-30');
+  const statusOptions = getProjectStatusOptions(projectStatuses, { value: status });
+  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [dueDate, setDueDate] = useState('');
   const [isRecurring, setIsRecurring] = useState(false);
   const [description, setDescription] = useState('');
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
@@ -42,12 +48,14 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
   const selectedManager = users.find(u => u.id === managerId) || currentUser;
   const activeUsers = users.filter(user => user.accountStatus !== 'INACTIVE');
   const managerOptions = activeUsers.filter(user => user.role !== 'COLABORADOR');
+  const isAdmin = isAdministrator(currentUser.role);
 
   useEffect(() => {
     if (!isOpen) return;
     setClientId(defaultClientId || clients[0]?.id || '');
     if (currentUser.role === 'GESTOR_PROJETO') setManagerId(currentUser.id);
-  }, [clients, currentUser.id, currentUser.role, defaultClientId, isOpen]);
+    if (!projectStatuses.some(option => option.id === status)) setStatus(projectStatuses[0]?.id || 'PLANEJAMENTO');
+  }, [clients, currentUser.id, currentUser.role, defaultClientId, isOpen, projectStatuses, status]);
 
   const projectTypeOptions: { value: ProjectType; label: string }[] = [
     { value: 'SITE', label: 'Criação de Site Institucional' },
@@ -76,8 +84,8 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
         clientName: selectedClient.name,
         managerId: selectedManager.id,
         managerName: selectedManager.name,
-        startDate,
-        dueDate,
+        startDate: isAdmin ? startDate : undefined,
+        dueDate: isAdmin ? dueDate : undefined,
         progress: 0,
         status,
         priority,
@@ -103,6 +111,8 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
       setSelectedUserIds([...selectedUserIds, userId]);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -186,7 +196,7 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
             <div>
               <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
                 <UserIcon size={12} className="text-zinc-500" />
-                Gestor Responsável
+                Responsável
               </label>
               <div className="flex items-center gap-2">
                 <UserAvatar name={selectedManager.name} src={selectedManager.avatar} className="w-7 h-7" />
@@ -207,71 +217,20 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
               <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
                 Status Inicial
               </label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value as ProjectStatus)}
-                className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-sky-500"
-              >
-                <option value="PLANEJAMENTO">Planejamento</option>
-                <option value="AGUARDANDO_INICIO">Aguardando Início</option>
-                <option value="EM_ANDAMENTO">Em Andamento</option>
-                <option value="AGUARDANDO_CLIENTE">Aguardando Cliente</option>
-                <option value="EM_REVISAO">Em Revisão</option>
-                <option value="PAUSADO">Pausado</option>
-                <option value="CONCLUIDO">Concluído</option>
-              </select>
+              <StatusPicker value={status} options={statusOptions} onChange={value => setStatus(value as ProjectStatus)} ariaLabel="Status inicial do projeto" />
             </div>
 
             <div>
               <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
                 Prioridade
               </label>
-              <select
-                value={priority}
-                onChange={(e) => setPriority(e.target.value as Priority)}
-                className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-sky-500"
-              >
-                <option value="URGENTE">🔥 Urgente</option>
-                <option value="ALTA">⚡ Alta</option>
-                <option value="NORMAL">Normal</option>
-                <option value="BAIXA">Baixa</option>
-              </select>
+              <PriorityPicker value={priority} onChange={setPriority} />
             </div>
           </div>
 
           {/* Dates & Recurring */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-            <div>
-              <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
-                <Calendar size={12} className="text-zinc-500" />
-                Data de Início
-              </label>
-              <input
-                type="date"
-                value={startDate}
-                onClick={(e) => {
-                  try { (e.target as any).showPicker?.(); } catch {}
-                }}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="w-full bg-[#181820] border border-zinc-700 hover:border-zinc-500 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-sky-500 cursor-pointer font-mono"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
-                <Calendar size={12} className="text-zinc-500" />
-                Prazo Final Previsto
-              </label>
-              <input
-                type="date"
-                value={dueDate}
-                onClick={(e) => {
-                  try { (e.target as any).showPicker?.(); } catch {}
-                }}
-                onChange={(e) => setDueDate(e.target.value)}
-                className="w-full bg-[#181820] border border-zinc-700 hover:border-zinc-500 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-sky-500 cursor-pointer font-mono"
-              />
-            </div>
+            {isAdmin ? <><DateTimePicker label="Data de início" value={startDate} onChange={setStartDate} /><DateTimePicker label="Prazo final previsto" value={dueDate} onChange={setDueDate} /></> : <div className="sm:col-span-2 rounded-xl border border-zinc-800 bg-zinc-900/40 p-2.5 text-[11px] text-zinc-500">Datas estruturais são definidas por um administrador.</div>}
 
             <div className="p-2.5 rounded-xl bg-[#181820] border border-zinc-700 flex items-center justify-between">
               <span className="text-xs text-zinc-300 flex items-center gap-1.5">

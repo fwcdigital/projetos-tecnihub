@@ -20,40 +20,32 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   onToggleComplete,
   onOpenNewTask
 }) => {
-  const [currentMonth, setCurrentMonth] = useState('Setembro de 2026');
+  const [monthDate, setMonthDate] = useState(() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), 1);
+  });
   const [viewMode, setViewMode] = useState<'GRID' | 'LIST'>('GRID');
 
-  // Days of September 2026 (starts on Tuesday 01)
-  const daysInSeptember = Array.from({ length: 30 }, (_, i) => {
-    const dayNum = i + 1;
-    const dateStr = `2026-09-${dayNum < 10 ? `0${dayNum}` : dayNum}`;
-    const dayTasks = tasks.filter(t => t.dueDate === dateStr);
+  const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const todayKey = dateKey(new Date());
+  const currentMonth = monthDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const currentMonthKey = dateKey(monthDate).slice(0, 7);
+  const firstGridDate = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1 - monthDate.getDay());
+  const allCalendarDays = Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(firstGridDate.getFullYear(), firstGridDate.getMonth(), firstGridDate.getDate() + index);
+    const dateStr = dateKey(date);
     return {
-      dayNum,
+      dayNum: date.getDate(),
+      date,
       dateStr,
-      isCurrentMonth: true,
-      tasks: dayTasks,
-      isToday: dateStr === '2026-09-01'
+      isCurrentMonth: date.getMonth() === monthDate.getMonth() && date.getFullYear() === monthDate.getFullYear(),
+      tasks: tasks.filter(task => task.dueDate === dateStr),
+      isToday: dateStr === todayKey
     };
   });
 
-  // Leading days (Sunday 30 Aug, Monday 31 Aug)
-  const leadingDays = [
-    { dayNum: 30, dateStr: '2026-08-30', isCurrentMonth: false, tasks: tasks.filter(t => t.dueDate === '2026-08-30'), isToday: false },
-    { dayNum: 31, dateStr: '2026-08-31', isCurrentMonth: false, tasks: tasks.filter(t => t.dueDate === '2026-08-31'), isToday: false },
-  ];
-
-  // Trailing days
-  const trailingDays = [
-    { dayNum: 1, dateStr: '2026-10-01', isCurrentMonth: false, tasks: [], isToday: false },
-    { dayNum: 2, dateStr: '2026-10-02', isCurrentMonth: false, tasks: [], isToday: false },
-    { dayNum: 3, dateStr: '2026-10-03', isCurrentMonth: false, tasks: [], isToday: false },
-  ];
-
-  const allCalendarDays = [...leadingDays, ...daysInSeptember, ...trailingDays];
-
   // Days with active tasks for Agenda / List view
-  const daysWithTasks = daysInSeptember.filter(d => d.tasks.length > 0);
+  const daysWithTasks = allCalendarDays.filter(day => day.isCurrentMonth && day.tasks.length > 0);
 
   return (
     <div className="p-3 sm:p-6 max-w-7xl mx-auto space-y-4 sm:space-y-5 animate-in fade-in duration-150">
@@ -66,7 +58,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               Calendário Operacional
             </h1>
             <span className="px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-300 text-xs font-mono font-bold border border-zinc-700">
-              Set / 2026
+              {monthDate.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' })}
             </span>
           </div>
           <p className="text-xs text-zinc-400 mt-1">
@@ -101,11 +93,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           </div>
 
           <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-1 text-xs">
-            <button className="p-1 rounded text-zinc-400 hover:text-white">
+            <button type="button" onClick={() => setMonthDate(previous => new Date(previous.getFullYear(), previous.getMonth() - 1, 1))} className="p-1 rounded text-zinc-400 hover:text-white" aria-label="Mês anterior">
               <ChevronLeft size={16} />
             </button>
             <span className="px-2 sm:px-3 font-bold text-zinc-200">{currentMonth}</span>
-            <button className="p-1 rounded text-zinc-400 hover:text-white">
+            <button type="button" onClick={() => setMonthDate(previous => new Date(previous.getFullYear(), previous.getMonth() + 1, 1))} className="p-1 rounded text-zinc-400 hover:text-white" aria-label="Próximo mês">
               <ChevronRight size={16} />
             </button>
           </div>
@@ -130,10 +122,10 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                   <span className={`px-2 py-0.5 rounded text-xs font-mono font-black ${
                     day.isToday ? 'bg-amber-400 text-black' : 'bg-zinc-800 text-zinc-200'
                   }`}>
-                    {day.dayNum < 10 ? `0${day.dayNum}` : day.dayNum} / 09
+                    {day.dayNum < 10 ? `0${day.dayNum}` : day.dayNum} / {String(day.date.getMonth() + 1).padStart(2, '0')}
                   </span>
                   <span className="text-xs font-bold text-zinc-300">
-                    {day.isToday ? 'Hoje (Terça-feira)' : `Dia ${day.dayNum}`}
+                    {day.isToday ? `Hoje (${day.date.toLocaleDateString('pt-BR', { weekday: 'long' })})` : day.date.toLocaleDateString('pt-BR', { weekday: 'long' })}
                   </span>
                 </div>
                 <span className="text-[11px] text-zinc-500 font-mono">
@@ -149,7 +141,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                     className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800 hover:border-zinc-700 active:bg-zinc-800 flex items-center justify-between gap-3 cursor-pointer transition-all"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <PriorityBadge priority={task.priority} size="sm" showLabel={false} />
+                      <PriorityBadge priority={task.priority} size="sm" />
                       <div className="min-w-0">
                         <p className={`text-xs font-semibold text-zinc-200 truncate ${
                           task.status === 'CONCLUIDO' ? 'line-through text-zinc-500' : ''
@@ -257,7 +249,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         </div>
       )}
       <CompletedTasksSection
-        tasks={completedTasks.filter(task => task.dueDate.startsWith('2026-09-'))}
+        tasks={completedTasks.filter(task => task.dueDate.startsWith(currentMonthKey))}
         onSelectTask={onSelectTask}
         onToggleComplete={onToggleComplete}
         contextKey={currentMonth}

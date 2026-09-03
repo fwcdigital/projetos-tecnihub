@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
 import { PGlite } from '@electric-sql/pglite';
 import type { Pool } from 'pg';
 import { setDatabasePoolForTests } from '../server/database/connection.js';
-import { clientRepository, projectRepository, taskRepository, userRepository } from '../server/db.js';
+import { checklistRepository, clientRepository, projectRepository, projectResourceRepository, routineRepository, taskCommentRepository, taskRepository, userRepository } from '../server/db.js';
 
 const migrationsDirectory = path.resolve(process.cwd(), 'server', 'database', 'migrations');
 
@@ -96,9 +96,16 @@ test('repositórios persistem clientes/projetos e aplicam o escopo RBAC', async 
       due_date: null, progress: 25, is_recurring: false, created_by: ids.superAdmin
     }, [ids.collaboratorTwo]);
 
+    const driveResource = await projectResourceRepository.create({
+      project_id: projectOne.id, kind: 'GOOGLE_DRIVE', name: 'Briefing', url: 'https://drive.google.com/example',
+      storage_path: null, mime_type: null, size_bytes: null, created_by: ids.superAdmin
+    });
+    assert.equal((await projectRepository.findById(projectOne.id))?.resources[0].id, driveResource.id);
+
     const taskOne = await taskRepository.create({
       project_id: projectOne.id, title: 'Tarefa Projeto A', description: '', responsible_user_id: ids.collaborator,
-      status: 'A_FAZER', priority: 'ALTA', start_date: '2026-09-02', due_date: '2026-09-10', due_time: '10:00',
+      assignee_ids: [ids.collaborator, ids.managerOne],
+      status: 'A_FAZER', priority: 'ALTA', start_date: '2026-09-02', start_time: '09:00', due_date: '2026-09-10', due_time: '10:00',
       completed_at: null, created_by: ids.superAdmin
     });
     const taskTwo = await taskRepository.create({
@@ -106,6 +113,39 @@ test('repositórios persistem clientes/projetos e aplicam o escopo RBAC', async 
       status: 'EM_ANDAMENTO', priority: 'NORMAL', start_date: '2026-09-02', due_date: '2026-09-11', due_time: null,
       completed_at: null, created_by: ids.superAdmin
     });
+
+    const subtask = await taskRepository.create({
+      project_id: projectOne.id, parent_task_id: taskOne.id, title: 'Subtarefa persistida', description: '',
+      responsible_user_id: ids.collaborator, assignee_ids: [ids.collaborator], status: 'A_FAZER', priority: 'NORMAL',
+      start_date: '2026-09-02', due_date: '2026-09-09', due_time: null, completed_at: null, created_by: ids.superAdmin
+    });
+    const checklistItem = await checklistRepository.create(subtask.id, {
+      title: 'Item persistido', due_date: '2026-09-08', due_time: '09:30', responsible_user_id: ids.collaborator
+    });
+    const clearedChecklistItem = await checklistRepository.update(checklistItem.id, {
+      due_date: null, due_time: null, responsible_user_id: null
+    });
+    assert.equal(clearedChecklistItem?.dueDate, undefined);
+    assert.equal(clearedChecklistItem?.dueTime, undefined);
+    assert.equal(clearedChecklistItem?.assigneeId, undefined);
+    const routine = await routineRepository.upsert({
+      source_task_id: taskOne.id, frequency: 'SEMANAL', rule_text: 'Toda segunda-feira',
+      next_occurrence_date: '2027-09-06', occurrence_time: '09:00', created_by: ids.superAdmin
+    });
+    assert.equal(routine.sourceTaskId, taskOne.id);
+    const enrichedTask = await taskRepository.findById(taskOne.id, { id: ids.collaborator, role: 'COLLABORATOR' });
+    assert.deepEqual(new Set(enrichedTask.assignees.map((assignee: any) => assignee.id)), new Set([ids.collaborator, ids.managerOne]));
+    assert.equal(enrichedTask.subtasks[0].id, subtask.id);
+    assert.equal(enrichedTask.subtasks[0].checklist[0].title, 'Item persistido');
+    assert.equal(enrichedTask.recurrence.frequency, 'SEMANAL');
+    assert.equal(enrichedTask.startTime, '09:00');
+    await taskCommentRepository.create(taskOne.id, ids.collaborator, 'Comentário persistido');
+    assert.equal((await taskRepository.findById(taskOne.id, { id: ids.collaborator, role: 'COLLABORATOR' })).comments[0].content, 'Comentário persistido');
+    assert.equal((await taskRepository.update(taskOne.id, { start_time: null }))?.startTime, undefined);
+    assert.equal((await routineRepository.findAll({ id: ids.superAdmin, role: 'SUPER_ADMIN' })).length, 1);
+    assert.equal((await routineRepository.findAll({ id: ids.admin, role: 'ADMIN' })).length, 1);
+    assert.equal((await routineRepository.findAll({ id: ids.collaborator, role: 'COLLABORATOR' })).length, 1);
+    assert.equal((await routineRepository.findAll({ id: ids.outsider, role: 'COLLABORATOR' })).length, 0);
 
     assert.equal((await projectRepository.findAll({ id: ids.superAdmin, role: 'SUPER_ADMIN' })).length, 2);
     assert.equal((await projectRepository.findAll({ id: ids.admin, role: 'ADMIN' })).length, 2);
@@ -223,6 +263,19 @@ test('repositórios persistem clientes/projetos e aplicam o escopo RBAC', async 
     setDatabasePoolForTests(null);
     useAsPool(database);
     assert.equal((await projectRepository.findById(projectOne.id))?.briefing.objective, 'Briefing persistido');
+
+    const today = new Date().toISOString().slice(0, 10);
+    await routineRepository.update(routine.id, { next_occurrence_date: today, status: 'ACTIVE' });
+    await routineRepository.materializeDueOccurrences({ id: ids.superAdmin, role: 'SUPER_ADMIN' });
+    await routineRepository.materializeDueOccurrences({ id: ids.superAdmin, role: 'SUPER_ADMIN' });
+    const generated = await database.query<{ id: string; generated_by_rule_id: string }>(
+      'SELECT id, generated_by_rule_id FROM tasks WHERE generated_by_rule_id = $1', [routine.id]
+    );
+    assert.equal(generated.rows.length, 1);
+    await taskRepository.update(generated.rows[0].id, { status: 'CONCLUIDO', completed_at: new Date().toISOString() });
+    assert.equal((await routineRepository.findById(routine.id))?.status, 'ACTIVE');
+    await routineRepository.delete(routine.id);
+    assert.ok(await taskRepository.findById(taskOne.id));
   } finally {
     setDatabasePoolForTests(null);
     await database.close();

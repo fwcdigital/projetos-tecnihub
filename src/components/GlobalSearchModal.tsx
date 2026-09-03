@@ -113,7 +113,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
                     className="flex items-center justify-between p-2 rounded-lg hover:bg-zinc-800/80 cursor-pointer border border-transparent hover:border-zinc-700/60 transition-colors"
                   >
                     <div className="flex items-center gap-2 truncate">
-                      <PriorityBadge priority={t.priority} size="sm" showLabel={false} />
+                      <PriorityBadge priority={t.priority} size="sm" />
                       <span className="font-medium text-zinc-200 truncate">{t.title}</span>
                       <span className="text-[10px] text-zinc-500 truncate hidden sm:inline">
                         • {t.clientName} ({t.projectName})
@@ -152,7 +152,8 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-zinc-400">
                       <span>{p.progress}%</span>
-                      <StatusBadge status={p.status} size="sm" />
+                      <PriorityBadge priority={p.priority} size="sm" />
+                      <StatusBadge status={p.status} label={p.statusName} color={p.statusColor} size="sm" />
                     </div>
                   </div>
                 ))}

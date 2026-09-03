@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { User as UserIcon, Bell, Shield, Key, Check, Moon, Globe, Laptop } from 'lucide-react';
+import { User as UserIcon, Bell, Key, Check, Loader2, AlertCircle } from 'lucide-react';
 
 interface ProfileViewProps {
   currentUser: User;
+  onChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 }
 
-export const ProfileView: React.FC<ProfileViewProps> = ({ currentUser }) => {
+export const ProfileView: React.FC<ProfileViewProps> = ({ currentUser, onChangePassword }) => {
   const [saved, setSaved] = useState(false);
   const [name, setName] = useState(currentUser.name);
   const [email, setEmail] = useState(currentUser.email);
@@ -14,11 +15,41 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ currentUser }) => {
   const [notifySlack, setNotifySlack] = useState(true);
   const [notifyEmail, setNotifyEmail] = useState(true);
   const [notifyBrowser, setNotifyBrowser] = useState(true);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    setSaveError('');
+    if (currentPassword || newPassword || confirmPassword) {
+      if (!currentPassword || newPassword.length < 6) {
+        setSaveError('Informe a senha atual e uma nova senha com pelo menos 6 caracteres.');
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        setSaveError('A confirmação da nova senha não confere.');
+        return;
+      }
+    }
+
+    setSaving(true);
+    try {
+      if (newPassword) {
+        await onChangePassword(currentPassword, newPassword);
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (error: any) {
+      setSaveError(error.message || 'Não foi possível salvar as alterações.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -72,8 +103,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ currentUser }) => {
               <input
                 type="text"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2.5 text-zinc-200 text-xs focus:outline-none focus:border-zinc-500"
+                disabled
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-400 text-xs cursor-not-allowed"
               />
             </div>
 
@@ -82,8 +113,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ currentUser }) => {
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2.5 text-zinc-200 text-xs focus:outline-none focus:border-zinc-500"
+                disabled
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-400 text-xs cursor-not-allowed"
               />
             </div>
 
@@ -107,6 +138,20 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ currentUser }) => {
               />
             </div>
           </div>
+          <p className="text-[10px] text-zinc-500">Nome, e-mail, cargo e perfil de acesso são administrados na área de Equipe.</p>
+        </div>
+
+        <div className="p-5 rounded-2xl bg-[#121216] border border-zinc-800 space-y-4 text-xs">
+          <h3 className="text-sm font-bold text-zinc-200 flex items-center gap-2">
+            <Key size={16} className="text-sky-400" />
+            Segurança da conta
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <label className="text-[11px] font-semibold text-zinc-400">Senha atual<input type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} className="mt-1 w-full bg-[#181820] border border-zinc-700 rounded-xl p-2.5 text-zinc-200 text-xs focus:outline-none focus:border-zinc-500" /></label>
+            <label className="text-[11px] font-semibold text-zinc-400">Nova senha<input type="password" autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} className="mt-1 w-full bg-[#181820] border border-zinc-700 rounded-xl p-2.5 text-zinc-200 text-xs focus:outline-none focus:border-zinc-500" /></label>
+            <label className="text-[11px] font-semibold text-zinc-400">Confirmar nova senha<input type="password" autoComplete="new-password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} className="mt-1 w-full bg-[#181820] border border-zinc-700 rounded-xl p-2.5 text-zinc-200 text-xs focus:outline-none focus:border-zinc-500" /></label>
+          </div>
+          {saveError && <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-rose-300"><AlertCircle size={14} />{saveError}</div>}
         </div>
 
         {/* Notifications */}
@@ -167,9 +212,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ currentUser }) => {
           )}
           <button
             type="submit"
-            className="px-6 py-2.5 rounded-xl bg-white text-zinc-950 hover:bg-zinc-100 font-bold text-xs shadow-md transition-all"
+            disabled={saving}
+            className="px-6 py-2.5 rounded-xl bg-white text-zinc-950 hover:bg-zinc-100 font-bold text-xs shadow-md transition-all disabled:opacity-50"
           >
-            Salvar Alterações
+            {saving ? <Loader2 size={14} className="animate-spin" /> : 'Salvar Alterações'}
           </button>
         </div>
       </form>

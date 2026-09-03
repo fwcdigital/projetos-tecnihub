@@ -13,6 +13,7 @@ export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser,
   const [isOpen, setIsOpen] = useState(false);
   const { logout, login } = useAuth();
   const [isSwitching, setIsSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState('');
 
   const getRoleIcon = (role: UserRole) => {
     switch (role) {
@@ -41,15 +42,19 @@ export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser,
   };
 
   const handleSwitchUser = async (targetUser: User) => {
+    if (targetUser.id === currentUser.id) {
+      setIsOpen(false);
+      return;
+    }
     setIsSwitching(true);
+    setSwitchError('');
     try {
       // Autenticar com a conta do usuário alvo para aplicar as regras de RBAC reais no backend
       await login(targetUser.email, 'Admin@123');
       onSelectUser(targetUser);
       setIsOpen(false);
     } catch {
-      onSelectUser(targetUser);
-      setIsOpen(false);
+      setSwitchError('Não foi possível autenticar esse perfil.');
     } finally {
       setIsSwitching(false);
     }
@@ -95,6 +100,7 @@ export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser,
             </div>
 
             <div className="space-y-1 max-h-60 overflow-y-auto">
+              {switchError && <p className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1.5 text-[10px] text-rose-300">{switchError}</p>}
               {displayUsers.map((user) => {
                 const isSelected = user.id === currentUser.id;
                 return (

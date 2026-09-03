@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Client, Project, Task, User } from '../types';
+import { Client, Project, ProjectStatusDefinition, Task, User } from '../types';
 import { TaskRow } from '../components/TaskRow';
 import { CompletedTasksSection } from '../components/CompletedTasksSection';
 import { 
@@ -22,22 +22,28 @@ import {
   Loader2,
   Calendar
 } from 'lucide-react';
-import { StatusBadge } from '../components/StatusBadge';
-import { PriorityBadge } from '../components/PriorityBadge';
+import { isClosedProjectStatus } from '../services/projectStatusService';
 import { UserAvatar } from '../components/UserAvatar';
+import { PriorityPicker } from '../components/PriorityPicker';
+import { StatusPicker } from '../components/StatusPicker';
+import { getProjectStatusOptions } from '../components/visualTokens';
+import { canManageProjectOperations } from '../permissions';
 
 interface DashboardViewProps {
   currentUser: User;
   tasks: Task[];
   completedTasks: Task[];
   projects: Project[];
+  projectStatuses: ProjectStatusDefinition[];
   clients: Client[];
   users: User[];
   onSelectTask: (task: Task) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
+  onUpdateTask: (task: Task) => void;
   onNavigate: (view: any) => void;
   onOpenNewTask: () => void;
   onOpenNewProject: () => void;
+  onUpdateProject: (project: Project, updates: Partial<Project>, teamUserIds?: string[]) => Promise<void>;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -45,15 +51,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   tasks,
   completedTasks,
   projects,
+  projectStatuses,
   clients,
   users,
   onSelectTask,
   onToggleComplete,
+  onUpdateTask,
   onNavigate,
   onOpenNewTask,
-  onOpenNewProject
+  onOpenNewProject,
+  onUpdateProject
 }) => {
-  const todayStr = '2026-09-01';
+  const canManageProjects = canManageProjectOperations(currentUser.role);
+  const dateKey = (date: Date) => {
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+    return local.toISOString().slice(0, 10);
+  };
+  const addDays = (days: number) => new Date(Date.now() + days * 86_400_000);
+  const todayStr = dateKey(new Date());
+  const tomorrowDate = addDays(1);
+  const dayAfterTomorrowDate = addDays(2);
+  const thirdDayDate = addDays(3);
+  const tomorrowKey = dateKey(tomorrowDate);
+  const dayAfterTomorrowKey = dateKey(dayAfterTomorrowDate);
+  const thirdDayKey = dateKey(thirdDayDate);
+  const dateLabel = (date: Date) => date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', weekday: 'long' });
 
   // Load more / Expand upcoming tasks state
   const [showMoreUpcoming, setShowMoreUpcoming] = useState(false);
@@ -64,21 +86,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Today Tasks
   const todayTasks = tasks.filter(t => t.dueDate === todayStr && t.status !== 'CONCLUIDO');
   // Tomorrow Tasks
-  const tomorrowTasks = tasks.filter(t => t.dueDate === '2026-09-02');
-  // 03 Set Tasks
-  const day03Tasks = tasks.filter(t => t.dueDate === '2026-09-03');
-  // 04 Set Tasks
-  const day04Tasks = tasks.filter(t => t.dueDate === '2026-09-04');
+  const tomorrowTasks = tasks.filter(t => t.dueDate === tomorrowKey);
+  const day03Tasks = tasks.filter(t => t.dueDate === dayAfterTomorrowKey);
+  const day04Tasks = tasks.filter(t => t.dueDate === thirdDayKey);
   // Next Days Tasks
-  const nextDaysTasks = tasks.filter(t => t.dueDate > '2026-09-04');
+  const nextDaysTasks = tasks.filter(t => t.dueDate > thirdDayKey);
   
   // Total future tasks beyond tomorrow
   const futureTasksCount = day03Tasks.length + day04Tasks.length + nextDaysTasks.length;
 
   // Upcoming Next 7 Days
-  const upcomingTasks = tasks.filter(t => t.dueDate > todayStr && t.dueDate <= '2026-09-08' && t.status !== 'CONCLUIDO');
+  const upcomingTasks = tasks.filter(t => t.dueDate > todayStr && t.dueDate <= dateKey(addDays(7)) && t.status !== 'CONCLUIDO');
   // Active Projects
-  const activeProjects = projects.filter(p => p.status === 'EM_ANDAMENTO' || p.status === 'PLANEJAMENTO');
+  const activeProjects = projects.filter(project => !isClosedProjectStatus(project.status));
   const handleToggleLoadMore = () => {
     if (!showMoreUpcoming) {
       setIsLoadingMore(true);
@@ -249,6 +269,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     task={task}
                     onSelectTask={onSelectTask}
                     onToggleComplete={onToggleComplete}
+                    onUpdateTask={onUpdateTask}
+                    projects={projects}
                   />
                 ))}
               </div>
@@ -280,6 +302,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   task={task}
                   onSelectTask={onSelectTask}
                   onToggleComplete={onToggleComplete}
+                  onUpdateTask={onUpdateTask}
+                  projects={projects}
                 />
               ))}
             </div>
@@ -291,7 +315,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-sky-400" />
                 <h2 className="text-xs font-bold uppercase tracking-wider text-sky-300">
-                  Amanhã (02 de Setembro)
+                  Amanhã ({tomorrowDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })})
                 </h2>
               </div>
             </div>
@@ -303,6 +327,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   task={task}
                   onSelectTask={onSelectTask}
                   onToggleComplete={onToggleComplete}
+                  onUpdateTask={onUpdateTask}
+                  projects={projects}
                 />
               ))}
             </div>
@@ -318,7 +344,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <div className="flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-indigo-400" />
                       <h2 className="text-xs font-bold uppercase tracking-wider text-indigo-300">
-                        03 de Setembro (Quarta-feira)
+                        {dateLabel(dayAfterTomorrowDate)}
                       </h2>
                     </div>
                     <span className="text-[10px] text-zinc-500 font-mono">{day03Tasks.length} {day03Tasks.length === 1 ? 'tarefa' : 'tarefas'}</span>
@@ -331,6 +357,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         task={task}
                         onSelectTask={onSelectTask}
                         onToggleComplete={onToggleComplete}
+                        onUpdateTask={onUpdateTask}
+                        projects={projects}
                       />
                     ))}
                   </div>
@@ -344,7 +372,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <div className="flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-violet-400" />
                       <h2 className="text-xs font-bold uppercase tracking-wider text-violet-300">
-                        04 de Setembro (Quinta-feira)
+                        {dateLabel(thirdDayDate)}
                       </h2>
                     </div>
                     <span className="text-[10px] text-zinc-500 font-mono">{day04Tasks.length} {day04Tasks.length === 1 ? 'tarefa' : 'tarefas'}</span>
@@ -357,6 +385,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         task={task}
                         onSelectTask={onSelectTask}
                         onToggleComplete={onToggleComplete}
+                        onUpdateTask={onUpdateTask}
+                        projects={projects}
                       />
                     ))}
                   </div>
@@ -383,6 +413,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         task={task}
                         onSelectTask={onSelectTask}
                         onToggleComplete={onToggleComplete}
+                        onUpdateTask={onUpdateTask}
+                        projects={projects}
                       />
                     ))}
                   </div>
@@ -442,6 +474,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
             )}
           </div>
+
+          <CompletedTasksSection
+            tasks={completedTasks}
+            onSelectTask={onSelectTask}
+            onToggleComplete={onToggleComplete}
+            onUpdateTask={onUpdateTask}
+            projects={projects}
+            contextKey="dashboard"
+          />
         </div>
 
         {/* Right 1 Col: Status dos Projetos e Recorrências */}
@@ -471,6 +512,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <span className="font-semibold text-zinc-200 truncate">{proj.name}</span>
                     </div>
                     <span className="text-[11px] font-mono font-bold text-zinc-300">{proj.progress}%</span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <PriorityPicker value={proj.priority} onChange={canManageProjects ? priority => void onUpdateProject(proj, { priority }) : undefined} />
+                    <StatusPicker value={proj.status} options={getProjectStatusOptions(projectStatuses, { value: proj.status, label: proj.statusName, color: proj.statusColor })} onChange={canManageProjects ? status => void onUpdateProject(proj, { status }) : undefined} ariaLabel={`Alterar status de ${proj.name}`} />
                   </div>
 
                   <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
@@ -583,12 +629,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      <CompletedTasksSection
-        tasks={completedTasks}
-        onSelectTask={onSelectTask}
-        onToggleComplete={onToggleComplete}
-        contextKey="dashboard"
-      />
     </div>
   );
 };

@@ -87,15 +87,21 @@ test('migrations criam o núcleo e tarefas no PostgreSQL com integridade e RLS',
     );
     assert.deepEqual(
       tables.rows.map(row => row.table_name),
-      ['clients', 'project_members', 'projects', 'schema_migrations', 'tasks', 'users']
+      ['checklist_items', 'clients', 'project_members', 'project_resources', 'project_statuses', 'projects', 'recurrence_rules', 'schema_migrations', 'task_assignees', 'task_comments', 'tasks', 'users']
     );
+
+    const taskColumns = await database.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name = 'tasks' AND column_name IN ('start_date', 'start_time', 'due_date', 'due_time')`
+    );
+    assert.deepEqual(new Set(taskColumns.rows.map(row => row.column_name)), new Set(['start_date', 'start_time', 'due_date', 'due_time']));
 
     const rls = await database.query<{ relname: string; relrowsecurity: boolean }>(
       `SELECT relname, relrowsecurity
        FROM pg_class
-       WHERE relname IN ('users', 'clients', 'projects', 'project_members', 'tasks')`
+       WHERE relname IN ('users', 'clients', 'projects', 'project_members', 'project_statuses', 'tasks', 'task_assignees', 'task_comments', 'checklist_items', 'project_resources', 'recurrence_rules')`
     );
-    assert.equal(rls.rows.length, 5);
+    assert.equal(rls.rows.length, 11);
     assert.ok(rls.rows.every(row => row.relrowsecurity));
   } finally {
     await database.close();

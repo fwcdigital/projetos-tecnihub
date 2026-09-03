@@ -1,17 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { Task, User } from '../types';
+import { Project, Task, User } from '../types';
 import { Plus, Pencil } from 'lucide-react';
 import { TaskRow } from '../components/TaskRow';
 import { CompletedTasksSection } from '../components/CompletedTasksSection';
 import { UserAvatar } from '../components/UserAvatar';
 import { UserManagementModal } from '../components/UserManagementModal';
+import { canManageUsers } from '../permissions';
 
 interface TeamViewProps {
   users: User[];
   tasks: Task[];
   completedTasks: Task[];
+  projects: Project[];
   onSelectTask: (task: Task) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
+  onUpdateTask: (task: Task) => void;
   currentUser: User;
   onCreateUser: (data: any) => Promise<void>;
   onUpdateUser: (id: string, data: any) => Promise<void>;
@@ -21,8 +24,10 @@ export const TeamView: React.FC<TeamViewProps> = ({
   users,
   tasks,
   completedTasks,
+  projects,
   onSelectTask,
   onToggleComplete,
+  onUpdateTask,
   currentUser,
   onCreateUser,
   onUpdateUser
@@ -30,7 +35,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
   const [selectedUser, setSelectedUser] = useState<User>(users[0] || currentUser);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingUser, setEditingUser] = useState<User | null | undefined>(undefined);
-  const canManageUsers = currentUser.role === 'ADMIN_PRINCIPAL' || currentUser.role === 'ADMIN';
+  const mayManageUsers = canManageUsers(currentUser.role);
   const today = new Date().toISOString().slice(0, 10);
 
   useEffect(() => {
@@ -60,7 +65,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
             Acompanhe a distribuição de demandas operacionais e disponibilidade de cada colaborador.
           </p>
         </div>
-        {canManageUsers && <button onClick={() => setEditingUser(null)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white text-zinc-950 text-xs font-bold"><Plus size={14} />Novo usuário</button>}
+        {mayManageUsers && <button onClick={() => setEditingUser(null)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white text-zinc-950 text-xs font-bold"><Plus size={14} />Novo usuário</button>}
       </div>
 
       {/* Team Cards Grid */}
@@ -118,7 +123,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
           </div>
 
           <div className="flex items-center gap-3 text-xs">
-            {canManageUsers && (currentUser.role === 'ADMIN_PRINCIPAL' || selectedUser.role !== 'ADMIN_PRINCIPAL') && <button onClick={() => setEditingUser(selectedUser)} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-200"><Pencil size={12} />Editar</button>}
+            {mayManageUsers && (currentUser.role === 'ADMIN_PRINCIPAL' || selectedUser.role !== 'ADMIN_PRINCIPAL') && <button onClick={() => setEditingUser(selectedUser)} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-200"><Pencil size={12} />Editar</button>}
             <div className="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800">
               <span className="text-[10px] text-zinc-500 block">Total Atribuídas</span>
               <strong className="text-white font-mono">{userTasks.length}</strong>
@@ -153,7 +158,9 @@ export const TeamView: React.FC<TeamViewProps> = ({
                   key={task.id}
                   task={task}
                   onSelectTask={onSelectTask}
-                  onToggleComplete={onToggleComplete}
+                    onToggleComplete={onToggleComplete}
+                  onUpdateTask={onUpdateTask}
+                  projects={projects}
                 />
               ))}
             </div>
@@ -162,6 +169,8 @@ export const TeamView: React.FC<TeamViewProps> = ({
             tasks={userCompletedTasks}
             onSelectTask={onSelectTask}
             onToggleComplete={onToggleComplete}
+            onUpdateTask={onUpdateTask}
+            projects={projects}
             contextKey={selectedUser.id}
           />
         </div>

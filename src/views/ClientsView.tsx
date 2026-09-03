@@ -1,17 +1,9 @@
-import React, { useState } from 'react';
-import { Client, Project, Task, User } from '../types';
-import { 
-  Building2, 
-  Search, 
-  Plus, 
-  Phone, 
-  Mail, 
-  User as UserIcon, 
-  FolderKanban, 
-  ArrowRight,
-  ShieldCheck,
-  Tag
-} from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ArrowRight, Building2, Mail, Plus, Search, User as UserIcon } from 'lucide-react';
+import { Client, Project, Task } from '../types';
+import { ViewMode, ViewModeSwitcher } from '../components/ViewModeSwitcher';
+import { isClosedProjectStatus } from '../services/projectStatusService';
+import { StatusBadge } from '../components/StatusBadge';
 
 interface ClientsViewProps {
   clients: Client[];
@@ -21,144 +13,38 @@ interface ClientsViewProps {
   onOpenNewClient?: () => void;
 }
 
-export const ClientsView: React.FC<ClientsViewProps> = ({
-  clients,
-  projects,
-  tasks,
-  onSelectClient,
-  onOpenNewClient
-}) => {
-  const [searchTerm, setSearchTerm] = useState('');
+const statusLabels: Record<Client['statusRelationship'], string> = {
+  ATIVO: 'Ativo', ONBOARDING: 'Onboarding', EM_RENOVACAO: 'Em renovação', PAUSADO: 'Pausado'
+};
 
-  const filteredClients = clients.filter(c => {
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    return c.name.toLowerCase().includes(term) || 
-      c.company.toLowerCase().includes(term) ||
-      c.contactName.toLowerCase().includes(term);
+export const ClientsView: React.FC<ClientsViewProps> = ({ clients, projects, tasks, onSelectClient, onOpenNewClient }) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => localStorage.getItem('tecnihub:clients-view') === 'TABLE' ? 'TABLE' : 'ROW');
+  useEffect(() => localStorage.setItem('tecnihub:clients-view', viewMode), [viewMode]);
+
+  const filteredClients = clients.filter(client => {
+    const term = searchTerm.trim().toLocaleLowerCase('pt-BR');
+    return !term || `${client.name} ${client.company} ${client.contactName} ${client.leadManagerName}`.toLocaleLowerCase('pt-BR').includes(term);
   });
+  const activeProjects = (client: Client) => projects.filter(project => project.clientId === client.id && !isClosedProjectStatus(project.status)).length;
+  const openTasks = (client: Client) => tasks.filter(task => task.clientId === client.id && task.status !== 'CONCLUIDO').length;
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-5 animate-in fade-in duration-150">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-zinc-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-              Clientes & Contas da Agência
-            </h1>
-            <span className="px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-300 text-xs font-mono font-bold border border-zinc-700">
-              {filteredClients.length} cadastrados
-            </span>
-          </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            Gestão das empresas atendidas, contatos diretos e serviços contratados.
-          </p>
-        </div>
+    <div className="mx-auto max-w-7xl space-y-4 p-4 sm:p-6">
+      <div className="flex flex-col justify-between gap-4 border-b border-zinc-800 pb-3 sm:flex-row sm:items-end"><div><div className="flex items-center gap-2"><h1 className="text-xl font-black tracking-tight text-white sm:text-2xl">Clientes</h1><span className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-0.5 font-mono text-xs font-bold text-zinc-300">{filteredClients.length}</span></div><p className="mt-1 text-xs text-zinc-400">Contatos, responsáveis e projetos ativos em uma visão compacta.</p></div><div className="flex items-center gap-2"><ViewModeSwitcher value={viewMode} onChange={setViewMode} />{onOpenNewClient && <button type="button" onClick={onOpenNewClient} className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-bold text-zinc-950 hover:bg-zinc-100"><Plus size={13} />Novo cliente</button>}</div></div>
 
-        {onOpenNewClient && (
-          <button
-            onClick={onOpenNewClient}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-zinc-950 hover:bg-zinc-100 text-xs font-bold shadow-sm transition-colors self-start sm:self-auto"
-          >
-            <Plus size={14} />
-            <span>+ Novo Cliente</span>
-          </button>
-        )}
-      </div>
+      <div className="rounded-xl border border-zinc-800 bg-[#121216] p-2.5"><div className="relative"><Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" /><input value={searchTerm} onChange={event => setSearchTerm(event.target.value)} placeholder="Buscar cliente, empresa, contato ou responsável" className="w-full rounded-lg border border-zinc-700 bg-[#181820] py-1.5 pl-8 pr-3 text-xs text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-zinc-500" /></div></div>
 
-      {/* Filter Bar */}
-      <div className="p-3 rounded-xl bg-[#121216] border border-zinc-800 flex items-center text-xs">
-        <div className="relative flex-1">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
-          <input
-            type="text"
-            placeholder="Buscar por nome da empresa, contato ou responsável..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-[#181820] border border-zinc-700/80 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-500"
-          />
-        </div>
-      </div>
-
-      {/* Clients Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredClients.map((client) => {
-          const clientProjects = projects.filter(p => p.clientId === client.id);
-          const clientTasks = tasks.filter(t => t.clientId === client.id);
-          const pendingTasks = clientTasks.filter(t => t.status !== 'CONCLUIDO').length;
-
-          return (
-            <div
-              key={client.id}
-              onClick={() => onSelectClient(client)}
-              className="p-4 rounded-xl bg-[#121216] border border-zinc-800 hover:border-zinc-700 cursor-pointer transition-all hover:bg-[#16161c] flex flex-col justify-between space-y-4 group"
-            >
-              {/* Header */}
-              <div className="space-y-2">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-purple-950/60 border border-purple-800/40 text-purple-300 flex items-center justify-center font-bold text-xs">
-                      {client.logo}
-                    </div>
-                    <div>
-                      <h2 className="text-sm font-bold text-zinc-100 group-hover:text-white transition-colors">
-                        {client.name}
-                      </h2>
-                      <p className="text-[11px] text-zinc-400">{client.company}</p>
-                    </div>
-                  </div>
-
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-medium">
-                    Ativo
-                  </span>
-                </div>
-
-                {/* Contact quick details */}
-                <div className="space-y-1 text-xs text-zinc-400 pt-1">
-                  <div className="flex items-center gap-1.5 truncate">
-                    <UserIcon size={12} className="text-zinc-500" />
-                    <span>{client.contactName}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 truncate">
-                    <Mail size={12} className="text-zinc-500" />
-                    <span>{client.contactEmail}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 truncate">
-                    <Phone size={12} className="text-zinc-500" />
-                    <span>{client.contactPhone}</span>
-                  </div>
-                </div>
-
-                {/* Monthly Services Tags */}
-                <div className="flex flex-wrap gap-1 pt-1">
-                  {client.monthlyServices.map((serv, idx) => (
-                    <span
-                      key={idx}
-                      className="px-1.5 py-0.5 rounded bg-zinc-800/80 text-zinc-300 text-[10px] font-medium border border-zinc-700/50"
-                    >
-                      {serv}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Bottom Metrics */}
-              <div className="flex items-center justify-between pt-3 border-t border-zinc-800/80 text-[11px] text-zinc-400">
-                <div className="flex items-center gap-3">
-                  <span className="font-semibold text-zinc-300">
-                    {clientProjects.length} {clientProjects.length === 1 ? 'projeto' : 'projetos'}
-                  </span>
-                  <span>•</span>
-                  <span>{pendingTasks} demandas abertas</span>
-                </div>
-
-                <ArrowRight size={14} className="text-zinc-600 group-hover:text-zinc-300 group-hover:translate-x-0.5 transition-all" />
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      {viewMode === 'ROW' ? <div className="space-y-1.5">{filteredClients.map(client => <article key={client.id} className="grid items-center gap-3 rounded-lg border border-zinc-800 bg-[#121216] px-3 py-2 transition-colors hover:border-zinc-700 hover:bg-[#16161c] md:grid-cols-[minmax(220px,1.3fr)_minmax(180px,1fr)_minmax(150px,.8fr)_90px_90px_100px_32px]">
+        <div className="flex min-w-0 items-center gap-2.5"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-purple-800/40 bg-purple-950/60 text-[10px] font-bold text-purple-300">{client.logo}</span><span className="min-w-0"><button type="button" onClick={() => onSelectClient(client)} className="block max-w-full truncate text-left text-xs font-bold text-zinc-100 hover:text-sky-300">{client.name}</button><span className="block truncate text-[10px] text-zinc-500">{client.company}</span></span></div>
+        <div className="min-w-0 text-[10px] text-zinc-500"><span className="flex items-center gap-1 truncate text-zinc-300"><UserIcon size={10} />{client.contactName}</span><span className="mt-0.5 flex items-center gap-1 truncate"><Mail size={10} />{client.contactEmail}</span></div>
+        <span className="flex min-w-0 items-center gap-1 truncate text-[10px] text-zinc-400"><UserIcon size={10} className="text-zinc-600" />{client.leadManagerName || 'Sem responsável'}</span>
+        <span className="text-[10px] text-zinc-400"><strong className="text-zinc-200">{activeProjects(client)}</strong> ativos</span>
+        <span className="text-[10px] text-zinc-500"><strong className="text-zinc-300">{openTasks(client)}</strong> tarefas</span>
+        <StatusBadge status={client.statusRelationship} label={statusLabels[client.statusRelationship]} size="sm" />
+        <button type="button" onClick={() => onSelectClient(client)} className="rounded p-1.5 text-zinc-600 hover:bg-zinc-800 hover:text-zinc-200" title="Abrir cliente"><ArrowRight size={13} /></button>
+      </article>)}</div> : <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-[#111115]"><table className="w-full min-w-[780px] border-collapse text-left"><thead><tr className="border-b border-zinc-800 text-[9px] font-bold uppercase tracking-wider text-zinc-600"><th className="px-3 py-2">Cliente</th><th className="px-3 py-2">Contato</th><th className="px-3 py-2">Responsável</th><th className="px-3 py-2">Projetos ativos</th><th className="px-3 py-2">Tarefas abertas</th><th className="px-3 py-2">Status</th></tr></thead><tbody className="divide-y divide-zinc-800">{filteredClients.map(client => <tr key={client.id} className="text-[11px] text-zinc-400 hover:bg-zinc-900/60"><td className="px-3 py-2"><button type="button" onClick={() => onSelectClient(client)} className="flex max-w-52 items-center gap-1.5 truncate font-bold text-zinc-100 hover:text-sky-300"><Building2 size={11} />{client.name}</button><span className="block truncate text-[9px] text-zinc-600">{client.company}</span></td><td className="px-3 py-2"><span className="block text-zinc-300">{client.contactName}</span><span className="block text-[9px] text-zinc-600">{client.contactEmail}</span></td><td className="px-3 py-2">{client.leadManagerName || '—'}</td><td className="px-3 py-2 font-mono">{activeProjects(client)}</td><td className="px-3 py-2 font-mono">{openTasks(client)}</td><td className="px-3 py-2"><StatusBadge status={client.statusRelationship} label={statusLabels[client.statusRelationship]} size="sm" /></td></tr>)}</tbody></table></div>}
+      {filteredClients.length === 0 && <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-10 text-center text-xs text-zinc-500">Nenhum cliente encontrado.</div>}
     </div>
   );
 };

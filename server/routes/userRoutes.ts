@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { userRepository, UserRole } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 import { isUuid } from '../validation.js';
+import { canManageUsers } from '../permissions.js';
 
 export const userRouter = Router();
 const USER_ROLES: UserRole[] = ['SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER', 'COLLABORATOR'];
@@ -41,7 +42,7 @@ userRouter.get('/:id', authenticateToken, async (req: AuthRequest, res: Response
 // POST /api/users - Cadastrar novo usuário (Apenas SUPER_ADMIN e ADMIN)
 userRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
-    const { name, email, password, role, job_title, avatar } = req.body;
+    const { name, email, password, role, job_title, avatar, status = 'ACTIVE' } = req.body;
 
     if (!name || !email || !password || !role) {
       return res.status(400).json({ error: 'Nome, e-mail, senha e nível de permissão são obrigatórios.' });
@@ -51,6 +52,9 @@ userRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), a
     }
     if (password.length < 6) {
       return res.status(400).json({ error: 'A senha deve possuir pelo menos 6 caracteres.' });
+    }
+    if (status !== 'ACTIVE' && status !== 'INACTIVE') {
+      return res.status(400).json({ error: 'Situação de usuário inválida.' });
     }
 
     if (role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
@@ -72,7 +76,7 @@ userRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), a
       avatar: avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=10b981&color=fff`,
       role: role as UserRole,
       job_title: job_title || 'Especialista',
-      status: 'ACTIVE'
+      status
     });
 
     return res.status(201).json({
@@ -93,39 +97,43 @@ userRouter.put('/:id', authenticateToken, async (req: AuthRequest, res: Response
       return res.status(404).json({ error: 'Usuário não encontrado.' });
     }
     const isSelf = req.user?.id === targetId;
-    const isAdmin = req.user?.role === 'SUPER_ADMIN' || req.user?.role === 'ADMIN';
+    const isAdmin = canManageUsers(req.user);
     const targetUser = await userRepository.findById(targetId);
     if (!targetUser) return res.status(404).json({ error: 'Usuário não encontrado.' });
 
-    if (targetUser.role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN' && !isSelf) {
-      return res.status(403).json({ error: 'Administradores não podem alterar contas SUPER_ADMIN.' });
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Você não tem permissão para administrar usuários.' });
     }
 
-    if (!isSelf && !isAdmin) {
-      return res.status(403).json({ error: 'Você não tem permissão para editar este usuário.' });
+    if (targetUser.role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Administradores não podem alterar contas SUPER_ADMIN.' });
     }
 
     const { name, email, password, role, job_title, avatar, status } = req.body;
     const updates: any = {};
 
-    if (name) updates.name = name.trim();
-    if (email) updates.email = email.trim().toLowerCase();
+    if (name !== undefined) {
+      if (!String(name).trim()) return res.status(400).json({ error: 'Nome é obrigatório.' });
+      updates.name = String(name).trim();
+    }
+    if (email !== undefined) {
+      if (!String(email).trim()) return res.status(400).json({ error: 'E-mail é obrigatório.' });
+      updates.email = String(email).trim().toLowerCase();
+    }
     if (avatar !== undefined) updates.avatar = String(avatar).trim();
     if (job_title !== undefined) updates.job_title = String(job_title).trim();
 
-    // Apenas Administradores podem alterar role e status
-    if (isAdmin) {
-      if (role) {
-        if (!USER_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil de acesso inválido.' });
-        if (role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
-          return res.status(403).json({ error: 'Apenas o Administrador Principal pode atribuir a permissão SUPER_ADMIN.' });
-        }
-        updates.role = role;
+    if (role !== undefined) {
+      if (isSelf) return res.status(403).json({ error: 'Um usuário não pode alterar o próprio perfil de acesso.' });
+      if (!USER_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil de acesso inválido.' });
+      if (role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({ error: 'Apenas o Administrador Principal pode atribuir a permissão SUPER_ADMIN.' });
       }
-      if (status) {
-        if (status !== 'ACTIVE' && status !== 'INACTIVE') return res.status(400).json({ error: 'Situação de usuário inválida.' });
-        updates.status = status;
-      }
+      updates.role = role;
+    }
+    if (status !== undefined) {
+      if (status !== 'ACTIVE' && status !== 'INACTIVE') return res.status(400).json({ error: 'Situação de usuário inválida.' });
+      updates.status = status;
     }
 
     if (password && password.trim().length < 6) return res.status(400).json({ error: 'A senha deve possuir pelo menos 6 caracteres.' });

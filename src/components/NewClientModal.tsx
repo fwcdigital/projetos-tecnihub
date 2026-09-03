@@ -17,8 +17,6 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
   users,
   currentUser
 }) => {
-  if (!isOpen) return null;
-
   const [name, setName] = useState('');
   const [company, setCompany] = useState('');
   const [contactName, setContactName] = useState('');
@@ -69,6 +67,8 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
       setIsSubmitting(false);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

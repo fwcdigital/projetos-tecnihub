@@ -1,5 +1,5 @@
 import { api } from './api';
-import { Task, TaskStatus } from '../types';
+import { ChecklistItem, Task, TaskStatus } from '../types';
 
 export interface TaskFilter {
   projectId?: string;
@@ -9,6 +9,12 @@ export interface TaskFilter {
   search?: string;
   includeCompleted?: boolean;
 }
+
+type ChecklistItemUpdates = Omit<Partial<ChecklistItem>, 'dueDate' | 'dueTime' | 'assigneeId'> & {
+  dueDate?: string | null;
+  dueTime?: string | null;
+  assigneeId?: string | null;
+};
 
 export const taskService = {
   // Obter todas as tarefas com filtros
@@ -72,6 +78,55 @@ export const taskService = {
       console.error(`Erro ao atualizar tarefa ${id}:`, error);
       throw error;
     }
+  },
+
+  createSubtask: async (parentTask: Task, data: Partial<Task>): Promise<Task> => {
+    const response = await api.post<{ success: boolean; task: Task }>('/api/tasks', {
+      ...data,
+      parentTaskId: parentTask.id,
+      projectId: parentTask.projectId
+    });
+    if (!response?.task) throw new Error('Falha ao criar subtarefa');
+    return response.task;
+  },
+
+  addChecklistItem: async (taskId: string, data: Partial<ChecklistItem>): Promise<Task> => {
+    const response = await api.post<{ success: boolean; task: Task }>(`/api/tasks/${taskId}/checklist`, data);
+    if (!response?.task) throw new Error('Falha ao criar item de checklist');
+    return response.task;
+  },
+
+  updateChecklistItem: async (taskId: string, itemId: string, updates: ChecklistItemUpdates): Promise<Task> => {
+    const response = await api.put<{ success: boolean; task: Task }>(`/api/tasks/${taskId}/checklist/${itemId}`, updates);
+    if (!response?.task) throw new Error('Falha ao atualizar item de checklist');
+    return response.task;
+  },
+
+  deleteChecklistItem: async (taskId: string, itemId: string): Promise<Task> => {
+    const response = await api.delete<{ success: boolean; task: Task }>(`/api/tasks/${taskId}/checklist/${itemId}`);
+    if (!response?.task) throw new Error('Falha ao excluir item de checklist');
+    return response.task;
+  },
+
+  setRecurrence: async (taskId: string, recurrence: {
+    frequency: string; ruleText: string; customIntervalDays?: number;
+    nextOccurrenceDate?: string; occurrenceTime?: string | null;
+  }): Promise<Task> => {
+    const response = await api.put<{ success: boolean; task: Task }>(`/api/tasks/${taskId}/recurrence`, recurrence);
+    if (!response?.task) throw new Error('Falha ao configurar recorrência');
+    return response.task;
+  },
+
+  removeRecurrence: async (taskId: string): Promise<Task> => {
+    const response = await api.delete<{ success: boolean; task: Task }>(`/api/tasks/${taskId}/recurrence`);
+    if (!response?.task) throw new Error('Falha ao remover recorrência');
+    return response.task;
+  },
+
+  addComment: async (taskId: string, content: string): Promise<Task> => {
+    const response = await api.post<{ success: boolean; task: Task }>(`/api/tasks/${taskId}/comments`, { content });
+    if (!response?.task) throw new Error('Falha ao adicionar comentário');
+    return response.task;
   },
 
   // Excluir tarefa

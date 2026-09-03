@@ -16,8 +16,10 @@
     "lint": "tsc --noEmit",
     "db:migrate": "tsx server/database/migrate.ts",
     "db:seed": "tsx server/database/seed.ts",
+    "db:reset-test-users": "tsx server/database/reset-test-users.ts",
     "db:clear-test-data": "tsx server/database/clear-test-data.ts",
     "test:rbac-live": "node scripts/validate-rbac.mjs",
+    "test:test-users": "tsx scripts/validate-test-users.ts",
     "db:import-json": "tsx server/database/import-json.ts"
   },
   "dependencies": {

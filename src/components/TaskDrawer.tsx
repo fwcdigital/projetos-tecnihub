@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
-import { Task, TaskStatus, Priority, ChecklistItem, Subtask, User, RecurrenceFrequency, Project } from '../types';
-import { StatusBadge } from './StatusBadge';
-import { PriorityBadge } from './PriorityBadge';
+import { Task, TaskStatus, Priority, Subtask, User, RecurrenceFrequency, Project } from '../types';
 import { 
   X, 
   Check, 
@@ -28,6 +26,15 @@ import {
   Tag
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
+import { AssigneePicker } from './AssigneePicker';
+import { PriorityPicker } from './PriorityPicker';
+import { StatusPicker } from './StatusPicker';
+import { TASK_STATUS_OPTIONS } from './visualTokens';
+import { DateTimePicker } from './DateTimePicker';
+import { taskService } from '../services/taskService';
+import { InlineEditableField } from './InlineEditableField';
+import { TaskChecklist } from './TaskChecklist';
+import { canManageTaskAssignments } from '../permissions';
 
 interface TaskDrawerProps {
   task: Task | null;
@@ -54,11 +61,12 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
 
   const project = projects?.find(item => item.id === task.projectId);
   const projectMemberIds = new Set(project?.teamMemberDetails?.map(member => member.id) || []);
-  const isAdmin = currentUser.role === 'ADMIN_PRINCIPAL' || currentUser.role === 'ADMIN' || (currentUser.role as any) === 'SUPER_ADMIN';
-  const availableUsers = (users || []).filter(user => user.accountStatus !== 'INACTIVE' && (isAdmin || projectMemberIds.has(user.id)));
+  const availableUsers = task.availableAssignees?.length
+    ? task.availableAssignees
+    : (users || []).filter(user => user.accountStatus !== 'INACTIVE' && projectMemberIds.has(user.id));
+  const canAssignPeople = canManageTaskAssignments(currentUser.role);
 
   const [activeTab, setActiveTab] = useState<'DETAILS' | 'SUBTASKS' | 'CHECKLIST' | 'COMMENTS' | 'FILES' | 'HISTORY'>('DETAILS');
-  const [newChecklistTitle, setNewChecklistTitle] = useState('');
   
   // Subtask Form State
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
@@ -66,122 +74,89 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
   const [subtaskFrequency, setSubtaskFrequency] = useState<RecurrenceFrequency>('SEMANAL');
   const [subtaskRule, setSubtaskRule] = useState('Toda semana');
   const [subtaskAssigneeName, setSubtaskAssigneeName] = useState(task.assigneeName || 'Caio Rocha');
-  const [subtaskDueDate, setSubtaskDueDate] = useState(task.dueDate || '2026-09-01');
+  const [subtaskDueDate, setSubtaskDueDate] = useState(task.dueDate);
   const [subtaskDueTime, setSubtaskDueTime] = useState(task.dueTime || '10:00');
   const [showSubtaskFormOptions, setShowSubtaskFormOptions] = useState(false);
   const [subtaskTabFilter, setSubtaskTabFilter] = useState<'ALL' | 'RECURRING_ONLY'>('ALL');
 
   const [newCommentText, setNewCommentText] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
+  const [actionError, setActionError] = useState('');
 
   const isCompleted = task.status === 'CONCLUIDO';
   const recurringSubtasksCount = task.subtasks.filter(s => s.isRecurring).length;
 
-  // Toggle Checklist Item
-  const handleToggleChecklist = (checkId: string) => {
-    const updatedChecklist = task.checklist.map(item => 
-      item.id === checkId ? { ...item, completed: !item.completed } : item
-    );
-    onUpdateTask({ ...task, checklist: updatedChecklist });
-  };
-
-  // Add Checklist Item
-  const handleAddChecklist = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newChecklistTitle.trim()) return;
-
-    const newItem: ChecklistItem = {
-      id: `chk-${Date.now()}`,
-      title: newChecklistTitle.trim(),
-      completed: false
-    };
-
-    onUpdateTask({
-      ...task,
-      checklist: [...task.checklist, newItem]
-    });
-    setNewChecklistTitle('');
-  };
-
   // Toggle Subtask
-  const handleToggleSubtask = (subtaskId: string) => {
-    const updatedSubtasks = task.subtasks.map(sub => 
-      sub.id === subtaskId ? { ...sub, completed: !sub.completed } : sub
-    );
-    onUpdateTask({ ...task, subtasks: updatedSubtasks });
+  const handleToggleSubtask = async (subtaskId: string) => {
+    try {
+      setActionError('');
+      const subtask = task.subtasks.find(item => item.id === subtaskId);
+      if (!subtask) return;
+      const updated = await taskService.update(subtask.id, { status: subtask.completed || subtask.status === 'CONCLUIDO' ? 'A_FAZER' : 'CONCLUIDO' });
+      onUpdateTask({ ...task, subtasks: task.subtasks.map(item => item.id === updated.id ? updated as unknown as Subtask : item) });
+    } catch (error: any) { setActionError(error.message || 'Não foi possível atualizar a subtarefa.'); }
   };
 
   // Delete Subtask
-  const handleDeleteSubtask = (subtaskId: string) => {
-    const updatedSubtasks = task.subtasks.filter(sub => sub.id !== subtaskId);
-    onUpdateTask({ ...task, subtasks: updatedSubtasks });
+  const handleDeleteSubtask = async (subtaskId: string) => {
+    try {
+      setActionError('');
+      await taskService.delete(subtaskId);
+      onUpdateTask({ ...task, subtasks: task.subtasks.filter(sub => sub.id !== subtaskId) });
+    } catch (error: any) { setActionError(error.message || 'Não foi possível excluir a subtarefa.'); }
   };
 
   // Toggle Subtask Recurrence
-  const handleToggleSubtaskRecurrence = (subtaskId: string) => {
-    const updatedSubtasks = task.subtasks.map(sub => {
-      if (sub.id === subtaskId) {
-        const nextRecurring = !sub.isRecurring;
-        return {
-          ...sub,
-          isRecurring: nextRecurring,
-          recurrenceFrequency: nextRecurring ? (sub.recurrenceFrequency || 'SEMANAL') : undefined,
-          recurrenceRule: nextRecurring ? (sub.recurrenceRule || 'Toda semana') : undefined
-        };
-      }
-      return sub;
-    });
-    onUpdateTask({ ...task, subtasks: updatedSubtasks });
+  const handleToggleSubtaskRecurrence = async (subtaskId: string) => {
+    try {
+      setActionError('');
+      const subtask = task.subtasks.find(item => item.id === subtaskId);
+      if (!subtask) return;
+      const updated = subtask.isRecurring
+        ? await taskService.removeRecurrence(subtaskId)
+        : await taskService.setRecurrence(subtaskId, { frequency: 'SEMANAL', ruleText: 'Toda semana' });
+      onUpdateTask({ ...task, subtasks: task.subtasks.map(item => item.id === subtaskId ? updated as unknown as Subtask : item) });
+    } catch (error: any) { setActionError(error.message || 'Não foi possível alterar a recorrência.'); }
   };
 
   // Add Subtask
-  const handleAddSubtask = (e: React.FormEvent) => {
+  const handleAddSubtask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSubtaskTitle.trim()) return;
 
-    const newSub: Subtask = {
-      id: `sub-${Date.now()}`,
-      title: newSubtaskTitle.trim(),
-      completed: false,
-      assigneeName: subtaskAssigneeName,
-      dueDate: subtaskDueDate,
-      dueTime: subtaskDueTime,
-      isRecurring: isSubtaskRecurring,
-      recurrenceFrequency: isSubtaskRecurring ? subtaskFrequency : undefined,
-      recurrenceRule: isSubtaskRecurring ? subtaskRule : undefined,
-      checklist: []
-    };
-
-    onUpdateTask({
-      ...task,
-      subtasks: [...task.subtasks, newSub],
-      // If task has recurring subtasks, ensure task is marked as recurring container
-      isRecurring: task.isRecurring || isSubtaskRecurring
-    });
-    setNewSubtaskTitle('');
-    setIsSubtaskRecurring(false);
-    setShowSubtaskFormOptions(false);
+    const selectedUser = canAssignPeople
+      ? (availableUsers.find(user => user.name === subtaskAssigneeName) || availableUsers[0])
+      : availableUsers.find(user => user.id === currentUser.id);
+    try {
+      setActionError('');
+      const newSub = await taskService.createSubtask(task, {
+        title: newSubtaskTitle.trim(), participantIds: selectedUser ? [selectedUser.id] : [currentUser.id],
+        assigneeId: selectedUser?.id || currentUser.id, dueDate: subtaskDueDate, dueTime: subtaskDueTime,
+        status: 'A_FAZER', priority: 'NORMAL', description: ''
+      });
+      if (isSubtaskRecurring) {
+        const recurringSubtask = await taskService.setRecurrence(newSub.id, { frequency: subtaskFrequency, ruleText: subtaskRule });
+        onUpdateTask({ ...task, subtasks: [...task.subtasks, recurringSubtask as unknown as Subtask] });
+      } else {
+        onUpdateTask({ ...task, subtasks: [...task.subtasks, newSub as unknown as Subtask] });
+      }
+      setNewSubtaskTitle('');
+      setIsSubtaskRecurring(false);
+      setShowSubtaskFormOptions(false);
+    } catch (error: any) { setActionError(error.message || 'Não foi possível criar a subtarefa.'); }
   };
 
   // Add Comment
-  const handleAddComment = (e: React.FormEvent) => {
+  const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCommentText.trim()) return;
 
-    const newComm = {
-      id: `comm-${Date.now()}`,
-      userId: currentUser.id,
-      userName: currentUser.name,
-      userAvatar: currentUser.avatar,
-      content: newCommentText.trim(),
-      createdAt: 'Agora mesmo'
-    };
-
-    onUpdateTask({
-      ...task,
-      comments: [newComm, ...task.comments]
-    });
-    setNewCommentText('');
+    try {
+      setActionError('');
+      const updated = await taskService.addComment(task.id, newCommentText.trim());
+      onUpdateTask(updated);
+      setNewCommentText('');
+    } catch (error: any) { setActionError(error.message || 'Não foi possível adicionar o comentário.'); }
   };
 
   // Change Status
@@ -200,9 +175,12 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
     });
   };
 
-  const copyTaskRef = () => {
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
+  const copyTaskRef = async () => {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/tasks/${task.id}`);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    } catch { setActionError('Não foi possível copiar o link da tarefa.'); }
   };
 
   // Filtered subtasks
@@ -260,6 +238,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
 
         {/* Drawer Body (Scrollable) */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5 sm:space-y-6">
+          {actionError && <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
           {/* Main Title & Complete Toggle */}
           <div className="flex items-start gap-3">
             <button
@@ -274,14 +253,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
             </button>
 
             <div className="flex-1">
-              <input
-                type="text"
-                value={task.title}
-                onChange={(e) => onUpdateTask({ ...task, title: e.target.value })}
-                className={`w-full bg-transparent font-bold text-base sm:text-xl text-zinc-100 focus:outline-none focus:border-b border-zinc-700 pb-1 ${
-                  isCompleted ? 'line-through text-zinc-500' : ''
-                }`}
-              />
+              <InlineEditableField value={task.title} onSave={title => onUpdateTask({ ...task, title })} className={`w-full bg-transparent pb-1 text-left text-base font-bold text-zinc-100 sm:text-xl ${isCompleted ? 'line-through text-zinc-500' : ''}`} />
             </div>
           </div>
 
@@ -293,19 +265,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                 <span className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
                 Status
               </span>
-              <select
-                value={task.status}
-                onChange={(e) => handleStatusChange(e.target.value as TaskStatus)}
-                className="bg-zinc-900 border border-zinc-700 rounded-md px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500"
-              >
-                <option value="BACKLOG">Backlog</option>
-                <option value="A_FAZER">A Fazer</option>
-                <option value="EM_ANDAMENTO">Em Andamento</option>
-                <option value="AGUARDANDO_CLIENTE">Aguardando Cliente</option>
-                <option value="EM_REVISAO">Em Revisão</option>
-                <option value="CONCLUIDO">Concluído</option>
-                <option value="BLOQUEADO">Bloqueado</option>
-              </select>
+              <StatusPicker value={task.status} options={TASK_STATUS_OPTIONS} onChange={status => handleStatusChange(status as TaskStatus)} ariaLabel="Alterar status da tarefa" />
             </div>
 
             {/* Priority Selector */}
@@ -314,103 +274,43 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                 <AlertCircle size={13} className="text-zinc-500" />
                 Prioridade
               </span>
-              <select
-                value={task.priority}
-                onChange={(e) => handlePriorityChange(e.target.value as Priority)}
-                className="bg-zinc-900 border border-zinc-700 rounded-md px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500"
-              >
-                <option value="URGENTE">Urgente</option>
-                <option value="ALTA">Alta</option>
-                <option value="NORMAL">Normal</option>
-                <option value="BAIXA">Baixa</option>
-              </select>
+              <PriorityPicker value={task.priority} onChange={handlePriorityChange} />
             </div>
 
-            {/* Assignee */}
-            <div className="flex items-center justify-between p-1.5">
-              <span className="text-zinc-400 font-medium flex items-center gap-1.5">
-                <UserIcon size={13} className="text-zinc-500" />
-                Responsável Principal
-              </span>
-              {availableUsers.length > 0 ? (
-                <div className="flex items-center gap-1.5">
-                  <select
-                    value={task.assigneeId}
-                    onChange={(e) => {
-                      const selected = availableUsers.find(u => u.id === e.target.value);
-                      if (selected) {
-                        onUpdateTask({
-                          ...task,
-                          assigneeId: selected.id,
-                          assigneeName: selected.name,
-                          assigneeAvatar: selected.avatar
-                        });
-                      }
-                    }}
-                    className="bg-zinc-900 border border-emerald-500/50 rounded-md px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-emerald-400 font-medium"
-                    title="Responsáveis disponíveis para este projeto"
-                  >
-                    {availableUsers.map(u => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} ({u.role === 'ADMIN_PRINCIPAL' ? 'Admin' : u.role === 'GESTOR' ? 'Gestor' : 'Colaborador'})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <UserAvatar name={task.assigneeName} src={task.assigneeAvatar} className="w-5 h-5" />
-                  <span className="text-zinc-200 font-medium">{task.assigneeName}</span>
-                </div>
-              )}
+            <div className="p-1.5">
+              <AssigneePicker
+                users={availableUsers}
+                selectedIds={task.participantIds}
+                selectedAssignees={task.assignees}
+                onChange={participantIds => onUpdateTask({ ...task, participantIds })}
+                disabled={!canAssignPeople}
+              />
             </div>
 
             {/* Due Date & Time */}
-            <div className="flex items-center justify-between p-1.5">
-              <span className="text-zinc-400 font-medium flex items-center gap-1.5">
-                <Calendar size={13} className="text-zinc-500" />
-                Prazo Final
-              </span>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="date"
-                  value={task.dueDate}
-                  onClick={(e) => {
-                    try { (e.target as any).showPicker?.(); } catch {}
-                  }}
-                  onChange={(e) => {
-                    if (e.target.value) {
-                      onUpdateTask({ ...task, dueDate: e.target.value });
-                    }
-                  }}
-                  className="bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded-md px-2 py-0.5 text-zinc-200 font-mono text-xs cursor-pointer focus:outline-none focus:border-emerald-500"
-                  title="Clique para abrir o calendário"
-                />
-                {task.dueTime && <span className="text-zinc-400 text-xs font-mono">{task.dueTime}</span>}
-              </div>
-            </div>
+            <div className="grid grid-cols-1 gap-2 p-1.5 sm:grid-cols-2"><DateTimePicker label="Data inicial" value={task.startDate || ''} time={task.startTime} allowClear onChange={(startDate, startTime) => onUpdateTask({ ...task, startDate: startDate || null, startTime: startDate ? (startTime || null) : null, dueDate: startDate && task.dueDate < startDate ? startDate : task.dueDate })} /><DateTimePicker label="Prazo final" value={task.dueDate} time={task.dueTime} onChange={(dueDate, dueTime) => onUpdateTask({ ...task, dueDate: task.startDate && dueDate < task.startDate ? task.startDate : dueDate, dueTime: dueTime || null })} /></div>
 
-            {/* Subtasks Recurrence Summary Indicator */}
-            <div className="flex items-center justify-between p-1.5 sm:col-span-2 border-t border-zinc-800/80 pt-2">
-              <span className="text-zinc-400 font-medium flex items-center gap-1.5">
-                <Repeat size={13} className={recurringSubtasksCount > 0 ? 'text-emerald-400' : 'text-zinc-500'} />
-                Rotinas / Subtarefas Recorrentes
-              </span>
-              <span className="flex items-center gap-1.5">
-                {recurringSubtasksCount > 0 ? (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] font-semibold">
-                    <Repeat size={11} />
-                    {recurringSubtasksCount} {recurringSubtasksCount === 1 ? 'rotina ativa' : 'rotinas ativas'}
-                  </span>
-                ) : (
-                  <span className="text-zinc-500 text-xs">Nenhuma subtarefa recorrente</span>
-                )}
-              </span>
+            <div className="flex items-center justify-between gap-3 border-t border-zinc-800/80 p-1.5 pt-3 sm:col-span-2">
+              <span className="flex items-center gap-1.5 font-medium text-zinc-400"><Repeat size={13} className={task.isRecurring ? 'text-emerald-400' : 'text-zinc-500'} />Recorrência</span>
+              <select
+                value={task.recurrence?.frequency || 'NAO_REPETIR'}
+                onChange={async event => {
+                  const frequency = event.target.value as RecurrenceFrequency;
+                  if (frequency === 'NAO_REPETIR') onUpdateTask(await taskService.removeRecurrence(task.id));
+                  else {
+                    const labels: Record<string, string> = { DIARIO: 'Todos os dias', SEMANAL: 'Toda semana', QUINZENAL: 'A cada 15 dias', MENSAL: 'Todo mês', PERSONALIZADO: 'A cada 7 dias' };
+                    onUpdateTask(await taskService.setRecurrence(task.id, { frequency, ruleText: labels[frequency], customIntervalDays: frequency === 'PERSONALIZADO' ? 7 : undefined }));
+                  }
+                }}
+                className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-emerald-500"
+              >
+                <option value="NAO_REPETIR">Não repetir</option><option value="DIARIO">Diariamente</option><option value="SEMANAL">Semanalmente</option><option value="QUINZENAL">Quinzenalmente</option><option value="MENSAL">Mensalmente</option><option value="PERSONALIZADO">Personalizado</option>
+              </select>
             </div>
           </div>
 
           {/* Navigation Tabs */}
-          <div className="flex items-center gap-1.5 border-b border-zinc-800 pb-1 overflow-x-auto text-xs whitespace-nowrap no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 [&>button:not(:nth-child(2))]:hidden">
+          <div className="flex items-center gap-1.5 border-b border-zinc-800 pb-1 overflow-x-auto text-xs whitespace-nowrap no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
             <button
               onClick={() => setActiveTab('SUBTASKS')}
               className={`px-3 py-2 sm:py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-colors flex-shrink-0 min-h-[38px] sm:min-h-0 ${
@@ -418,7 +318,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
               }`}
             >
               <Repeat size={13} className={recurringSubtasksCount > 0 ? 'text-emerald-400' : ''} />
-              Subtarefas & Rotinas
+              Subtarefas
               <span className="px-1.5 py-0.2 rounded-full bg-zinc-700 text-[10px]">
                 {task.subtasks.length}
               </span>
@@ -597,42 +497,20 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                           Responsável da Subtarefa
                         </label>
                         <select
-                          value={subtaskAssigneeName}
+                          value={canAssignPeople ? subtaskAssigneeName : currentUser.name}
                           onChange={(e) => setSubtaskAssigneeName(e.target.value)}
-                          className="w-full bg-[#121216] border border-zinc-700 rounded-md p-1.5 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500"
+                          disabled={!canAssignPeople}
+                          className="w-full bg-[#121216] border border-zinc-700 rounded-md p-1.5 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          {availableUsers.map(u => (
-                            <option key={u.id} value={u.name}>{u.name} ({u.position})</option>
-                          ))}
+                          {canAssignPeople
+                            ? availableUsers.map(u => (
+                                <option key={u.id} value={u.name}>{u.name} ({u.position})</option>
+                              ))
+                            : <option value={currentUser.name}>{currentUser.name}</option>}
                         </select>
                       </div>
 
-                      <div>
-                        <label className="block text-[10px] text-zinc-400 font-semibold mb-1">
-                          Data Limite / Próxima Execução
-                        </label>
-                        <input
-                          type="date"
-                          value={subtaskDueDate}
-                          onClick={(e) => {
-                            try { (e.target as any).showPicker?.(); } catch {}
-                          }}
-                          onChange={(e) => setSubtaskDueDate(e.target.value)}
-                          className="w-full bg-[#121216] border border-zinc-700 rounded-md p-1.5 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500 cursor-pointer"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[10px] text-zinc-400 font-semibold mb-1">
-                          Horário Previsto
-                        </label>
-                        <input
-                          type="time"
-                          value={subtaskDueTime}
-                          onChange={(e) => setSubtaskDueTime(e.target.value)}
-                          className="w-full bg-[#121216] border border-zinc-700 rounded-md p-1.5 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500"
-                        />
-                      </div>
+                      <div className="sm:col-span-2"><DateTimePicker label="Prazo da subtarefa" value={subtaskDueDate} time={subtaskDueTime} onChange={(date, time) => { setSubtaskDueDate(date); setSubtaskDueTime(time || ''); }} /></div>
                     </div>
                   </div>
                 )}
@@ -723,7 +601,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                         <div className="flex items-center gap-1 flex-shrink-0">
                           {/* Toggle recurrence button */}
                           <button
-                            onClick={() => handleToggleSubtaskRecurrence(sub.id)}
+                            onClick={() => void handleToggleSubtaskRecurrence(sub.id)}
                             className={`p-1 rounded-md text-xs transition-colors ${
                               sub.isRecurring 
                                 ? 'text-emerald-400 hover:bg-emerald-500/10' 
@@ -803,48 +681,8 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
           {/* TAB 3: CHECKLIST */}
           {activeTab === 'CHECKLIST' && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                  Itens de Verificação / Checklist
-                </span>
-              </div>
-
-              <div className="space-y-1.5">
-                {task.checklist.map((item) => (
-                  <div
-                    key={item.id}
-                    onClick={() => handleToggleChecklist(item.id)}
-                    className="flex items-center gap-2.5 p-2 rounded-lg bg-[#16161c] border border-zinc-800/80 hover:border-zinc-700 cursor-pointer transition-all"
-                  >
-                    <div
-                      className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
-                        item.completed ? 'bg-emerald-500 border-emerald-500 text-black' : 'border-zinc-600 bg-zinc-900'
-                      }`}
-                    >
-                      {item.completed && <Check size={11} strokeWidth={3} />}
-                    </div>
-                    <span className={`text-xs text-zinc-200 flex-1 ${item.completed ? 'line-through text-zinc-500' : ''}`}>
-                      {item.title}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              <form onSubmit={handleAddChecklist} className="flex items-center gap-2 mt-3">
-                <input
-                  type="text"
-                  placeholder="+ Novo item de checklist..."
-                  value={newChecklistTitle}
-                  onChange={(e) => setNewChecklistTitle(e.target.value)}
-                  className="flex-1 bg-[#141419] border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-zinc-600"
-                />
-                <button
-                  type="submit"
-                  className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold"
-                >
-                  Adicionar
-                </button>
-              </form>
+              <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Itens de Verificação / Checklist</span>
+              <TaskChecklist ownerId={task.id} items={task.checklist} users={availableUsers} onOwnerUpdate={onUpdateTask} />
             </div>
           )}
 
@@ -895,8 +733,8 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
               </div>
               <div className="p-6 border border-dashed border-zinc-800 rounded-xl text-center text-xs text-zinc-400">
                 <Paperclip size={20} className="mx-auto mb-2 text-zinc-600" />
-                <p>Arraste arquivos aqui ou clique para selecionar</p>
-                <span className="text-[10px] text-zinc-600 mt-1 block">PNG, PDF, FIG, ZIP até 50MB</span>
+                <p>Nenhum anexo disponível.</p>
+                <span className="text-[10px] text-zinc-600 mt-1 block">O envio de arquivos ainda não está habilitado para tarefas.</span>
               </div>
             </div>
           )}
@@ -926,7 +764,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
           <button
             onClick={() => {
               if (confirm('Deseja excluir esta tarefa?')) {
-                onClose();
+                void onDeleteTask(task.id);
               }
             }}
             className="text-rose-400 hover:text-rose-300 flex items-center gap-1.5 font-medium"

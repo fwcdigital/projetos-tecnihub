@@ -51,15 +51,16 @@ export type TaskStatus =
   | 'CONCLUIDO' 
   | 'BLOQUEADO';
 
-export type ProjectStatus = 
-  | 'PLANEJAMENTO'
-  | 'AGUARDANDO_INICIO'
-  | 'EM_ANDAMENTO'
-  | 'AGUARDANDO_CLIENTE'
-  | 'EM_REVISAO'
-  | 'PAUSADO'
-  | 'CONCLUIDO'
-  | 'CANCELADO';
+export type ProjectStatus = string;
+
+export interface ProjectStatusDefinition {
+  id: string;
+  name: string;
+  color: string;
+  position: number;
+  active: boolean;
+  projectsCount: number;
+}
 
 export type ProjectType = 
   | 'SITE'
@@ -81,10 +82,40 @@ export type RecurrenceFrequency =
   | 'MENSAL'
   | 'PERSONALIZADO';
 
+export interface RecurrenceRule {
+  id: string;
+  sourceTaskId: string;
+  title: string;
+  projectId: string;
+  projectName: string;
+  clientId: string;
+  clientName: string;
+  frequency: Exclude<RecurrenceFrequency, 'NAO_REPETIR'>;
+  ruleText: string;
+  customIntervalDays?: number;
+  nextOccurrenceDate: string;
+  occurrenceTime?: string | null;
+  status: 'ACTIVE' | 'PAUSED' | 'ENDED';
+  assignees: Assignee[];
+  priority: Priority;
+  description: string;
+}
+
 export interface ChecklistItem {
   id: string;
   title: string;
   completed: boolean;
+  position?: number;
+  dueDate?: string;
+  dueTime?: string;
+  assigneeId?: string;
+}
+
+export interface Assignee {
+  id: string;
+  name: string;
+  avatar: string;
+  position: string;
 }
 
 export interface Subtask {
@@ -94,6 +125,11 @@ export interface Subtask {
   assigneeId?: string;
   assigneeName?: string;
   assigneeAvatar?: string;
+  participantIds?: string[];
+  assignees?: Assignee[];
+  availableAssignees?: Assignee[];
+  status?: TaskStatus;
+  priority?: Priority;
   dueDate?: string;
   dueTime?: string;
   isRecurring?: boolean;
@@ -134,18 +170,23 @@ export interface Task {
   clientName: string;
   projectId: string;
   projectName: string;
+  parentTaskId?: string;
+  generatedByRuleId?: string;
   assigneeId: string;
   assigneeName: string;
   assigneeAvatar: string;
   participantIds: string[];
+  assignees?: Assignee[];
   priority: Priority;
   status: TaskStatus;
-  startDate?: string;
+  startDate?: string | null;
+  startTime?: string | null;
   dueDate: string; // ISO or YYYY-MM-DD
-  dueTime?: string; // HH:MM
+  dueTime?: string | null; // HH:MM
   isRecurring: boolean;
   recurrenceFrequency?: RecurrenceFrequency;
   recurrenceRule?: string;
+  recurrence?: Pick<RecurrenceRule, 'id' | 'frequency' | 'ruleText' | 'customIntervalDays' | 'nextOccurrenceDate' | 'occurrenceTime' | 'status'>;
   description: string;
   subtasks: Subtask[];
   checklist: ChecklistItem[];
@@ -198,11 +239,26 @@ export interface Project {
   dueDate: string;
   progress: number; // 0 to 100
   status: ProjectStatus;
+  statusName?: string;
+  statusColor?: string;
+  statusActive?: boolean;
   priority: Priority;
   type: ProjectType;
   isRecurring: boolean;
   description: string;
   briefing?: Record<string, string>;
+  resources?: ProjectResource[];
   tasksCount: number;
   overdueTasksCount: number;
+}
+
+export interface ProjectResource {
+  id: string;
+  projectId: string;
+  kind: 'FILE' | 'GOOGLE_DRIVE';
+  name: string;
+  url?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  createdAt: string;
 }

@@ -66,6 +66,30 @@ authRouter.get('/me', authenticateToken, async (req: AuthRequest, res: Response)
   }
 });
 
+// POST /api/auth/change-password - Alterar a própria senha
+authRouter.post('/change-password', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const { current_password, new_password } = req.body;
+    if (!current_password || !new_password) {
+      return res.status(400).json({ error: 'Senha atual e nova senha são obrigatórias.' });
+    }
+    if (String(new_password).trim().length < 6) {
+      return res.status(400).json({ error: 'A nova senha deve possuir pelo menos 6 caracteres.' });
+    }
+
+    const user = await userRepository.findByEmail(req.user!.email);
+    if (!user || !bcrypt.compareSync(String(current_password), user.password_hash)) {
+      return res.status(400).json({ error: 'A senha atual está incorreta.' });
+    }
+
+    const password_hash = bcrypt.hashSync(String(new_password), bcrypt.genSaltSync(10));
+    await userRepository.update(req.user!.id, { password_hash });
+    return res.json({ message: 'Senha alterada com sucesso.' });
+  } catch (error) {
+    return res.status(500).json({ error: 'Erro ao alterar senha.' });
+  }
+});
+
 // POST /api/auth/logout
 authRouter.post('/logout', (req, res) => {
   return res.json({ message: 'Sessão encerrada com sucesso.' });

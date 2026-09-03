@@ -35,6 +35,7 @@ interface MyWorkViewProps {
   users: User[];
   onSelectTask: (task: Task) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
+  onUpdateTask: (task: Task) => void;
   onOpenNewTask: () => void;
 }
 
@@ -47,6 +48,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
   users,
   onSelectTask,
   onToggleComplete,
+  onUpdateTask,
   onOpenNewTask
 }) => {
   // Filter States
@@ -58,9 +60,18 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
   const [selectedPriority, setSelectedPriority] = useState<string>('ALL');
   const [onlyOverdue, setOnlyOverdue] = useState(false);
   const [onlyRecurring, setOnlyRecurring] = useState(false);
-  const [viewMode, setViewMode] = useState<'LIST' | 'TABLE' | 'KANBAN'>('LIST');
+  const [viewMode, setViewMode] = useState<'PROJECTS' | 'LIST' | 'TABLE' | 'KANBAN'>('PROJECTS');
 
-  const todayStr = '2026-09-01';
+  const dateKey = (daysAhead: number) => {
+    const date = new Date();
+    date.setDate(date.getDate() + daysAhead);
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+  };
+  const formatLongDate = (value: string) => new Date(`${value}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' }).toLocaleUpperCase('pt-BR');
+  const todayStr = dateKey(0);
+  const tomorrowStr = dateKey(1);
+  const dayAfterTomorrowStr = dateKey(2);
+  const thirdDayStr = dateKey(3);
 
   // Apply filters
   const filteredTasks = useMemo(() => {
@@ -78,7 +89,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
       }
 
       // Assignee Filter
-      if (selectedAssignee !== 'ALL' && task.assigneeId !== selectedAssignee) {
+      if (selectedAssignee !== 'ALL' && !task.participantIds.includes(selectedAssignee)) {
         return false;
       }
 
@@ -136,7 +147,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
         if (![task.title, task.clientName, task.projectName, task.assigneeName]
           .some(value => value.toLowerCase().includes(term))) return false;
       }
-      if (selectedAssignee !== 'ALL' && task.assigneeId !== selectedAssignee) return false;
+      if (selectedAssignee !== 'ALL' && !task.participantIds.includes(selectedAssignee)) return false;
       if (selectedClient !== 'ALL' && task.clientId !== selectedClient) return false;
       if (selectedProject !== 'ALL' && task.projectId !== selectedProject) return false;
       if (selectedPriority !== 'ALL' && task.priority !== selectedPriority) return false;
@@ -158,10 +169,13 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
   // Group Chronologically (ClickUp & Linear style)
   const overdueTasks = filteredTasks.filter(t => t.dueDate < todayStr && t.status !== 'CONCLUIDO');
   const todayTasks = filteredTasks.filter(t => t.dueDate === todayStr);
-  const tomorrowTasks = filteredTasks.filter(t => t.dueDate === '2026-09-02');
-  const day03Tasks = filteredTasks.filter(t => t.dueDate === '2026-09-03');
-  const day04Tasks = filteredTasks.filter(t => t.dueDate === '2026-09-04');
-  const upcomingTasks = filteredTasks.filter(t => t.dueDate > '2026-09-04');
+  const tomorrowTasks = filteredTasks.filter(t => t.dueDate === tomorrowStr);
+  const day03Tasks = filteredTasks.filter(t => t.dueDate === dayAfterTomorrowStr);
+  const day04Tasks = filteredTasks.filter(t => t.dueDate === thirdDayStr);
+  const upcomingTasks = filteredTasks.filter(t => t.dueDate > thirdDayStr);
+  const projectGroups = useMemo(() => projects
+    .map(project => ({ project, tasks: filteredTasks.filter(task => task.projectId === project.id) }))
+    .filter(group => group.tasks.length > 0), [projects, filteredTasks]);
 
   const clearFilters = () => {
     setSearchTerm('');
@@ -191,14 +205,14 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-              Meu Trabalho & Cronograma
+              Tarefas
             </h1>
             <span className="px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-300 text-xs font-mono font-bold border border-zinc-700">
               {filteredTasks.length} {filteredTasks.length === 1 ? 'tarefa' : 'tarefas'}
             </span>
           </div>
           <p className="text-xs text-zinc-400 mt-1">
-            Organização cronológica centralizada de todas as demandas e entregas da agência.
+            Visão geral por projeto, com subtarefas e checklists expansíveis na própria lista.
           </p>
         </div>
 
@@ -206,6 +220,15 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
         <div className="flex items-center gap-2">
           {/* List / Table / Kanban View Toggle */}
           <div className="flex items-center p-1 rounded-lg bg-zinc-900 border border-zinc-800 text-xs">
+            <button
+              onClick={() => setViewMode('PROJECTS')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium transition-colors ${
+                viewMode === 'PROJECTS' ? 'bg-zinc-800 text-white font-semibold shadow-xs' : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <FolderKanban size={14} />
+              <span>Por projeto</span>
+            </button>
             <button
               onClick={() => setViewMode('LIST')}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium transition-colors ${
@@ -353,6 +376,23 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
         </div>
       </div>
 
+      {viewMode === 'PROJECTS' && (
+        <div className="space-y-4">
+          {projectGroups.map(({ project, tasks: projectTasks }) => (
+            <section key={project.id} className="overflow-visible rounded-xl border border-zinc-800 bg-[#101014]">
+              <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2.5">
+                <div className="min-w-0"><h2 className="truncate text-xs font-black text-zinc-100">{project.name}</h2><p className="mt-0.5 truncate text-[10px] text-zinc-500">{project.clientName}</p></div>
+                <span className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-0.5 font-mono text-[10px] text-zinc-400">{projectTasks.length}</span>
+              </div>
+              <div className="space-y-1 p-2">
+                {projectTasks.map(task => <TaskRow key={task.id} task={task} onSelectTask={onSelectTask} onToggleComplete={onToggleComplete} onUpdateTask={onUpdateTask} projects={projects} />)}
+              </div>
+            </section>
+          ))}
+          {projectGroups.length === 0 && <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-10 text-center text-xs text-zinc-500">Nenhuma tarefa encontrada com os filtros selecionados.</div>}
+        </div>
+      )}
+
       {/* VIEW MODE 1: CHRONOLOGICAL LIST (The Core ClickUp Experience) */}
       {viewMode === 'LIST' && (
         <div className="space-y-6">
@@ -376,6 +416,8 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                     task={task}
                     onSelectTask={onSelectTask}
                     onToggleComplete={onToggleComplete}
+                    onUpdateTask={onUpdateTask}
+                    projects={projects}
                   />
                 ))}
               </div>
@@ -388,7 +430,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
                 <h2 className="text-xs font-black uppercase tracking-wider text-amber-300">
-                  HOJE • 01 DE SETEMBRO ({todayTasks.length})
+                  HOJE • {formatLongDate(todayStr)} ({todayTasks.length})
                 </h2>
               </div>
               <span className="text-[11px] text-amber-400/80 font-medium">Meta do dia</span>
@@ -406,6 +448,8 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                     task={task}
                     onSelectTask={onSelectTask}
                     onToggleComplete={onToggleComplete}
+                    onUpdateTask={onUpdateTask}
+                    projects={projects}
                   />
                 ))}
               </div>
@@ -418,7 +462,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-sky-400" />
                 <h2 className="text-xs font-black uppercase tracking-wider text-sky-300">
-                  AMANHÃ • 02 DE SETEMBRO ({tomorrowTasks.length})
+                  AMANHÃ • {formatLongDate(tomorrowStr)} ({tomorrowTasks.length})
                 </h2>
               </div>
             </div>
@@ -435,6 +479,8 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                     task={task}
                     onSelectTask={onSelectTask}
                     onToggleComplete={onToggleComplete}
+                    onUpdateTask={onUpdateTask}
+                    projects={projects}
                   />
                 ))}
               </div>
@@ -448,7 +494,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-zinc-400" />
                   <h2 className="text-xs font-black uppercase tracking-wider text-zinc-300">
-                    03 DE SETEMBRO ({day03Tasks.length})
+                    {formatLongDate(dayAfterTomorrowStr)} ({day03Tasks.length})
                   </h2>
                 </div>
               </div>
@@ -460,6 +506,8 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                     task={task}
                     onSelectTask={onSelectTask}
                     onToggleComplete={onToggleComplete}
+                    onUpdateTask={onUpdateTask}
+                    projects={projects}
                   />
                 ))}
               </div>
@@ -473,7 +521,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-zinc-400" />
                   <h2 className="text-xs font-black uppercase tracking-wider text-zinc-300">
-                    04 DE SETEMBRO ({day04Tasks.length})
+                    {formatLongDate(thirdDayStr)} ({day04Tasks.length})
                   </h2>
                 </div>
               </div>
@@ -485,6 +533,8 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                     task={task}
                     onSelectTask={onSelectTask}
                     onToggleComplete={onToggleComplete}
+                    onUpdateTask={onUpdateTask}
+                    projects={projects}
                   />
                 ))}
               </div>
@@ -510,6 +560,8 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                     task={task}
                     onSelectTask={onSelectTask}
                     onToggleComplete={onToggleComplete}
+                    onUpdateTask={onUpdateTask}
+                    projects={projects}
                   />
                 ))}
               </div>
@@ -575,15 +627,15 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
       {viewMode === 'KANBAN' && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 overflow-x-auto pb-4">
           {[
-            { id: 'A_FAZER', label: 'A Fazer', color: 'border-blue-500/40 text-blue-300' },
-            { id: 'EM_ANDAMENTO', label: 'Em Andamento', color: 'border-emerald-500/40 text-emerald-300' },
-            { id: 'EM_REVISAO', label: 'Em Revisão / Aprovação', color: 'border-purple-500/40 text-purple-300' },
+            { id: 'A_FAZER' as TaskStatus, label: 'A fazer' },
+            { id: 'EM_ANDAMENTO' as TaskStatus, label: 'Em andamento' },
+            { id: 'EM_REVISAO' as TaskStatus, label: 'Em revisão / aprovação' },
           ].map(column => {
             const colTasks = filteredTasks.filter(t => t.status === column.id);
             return (
               <div key={column.id} className="bg-[#121216] border border-zinc-800 rounded-xl p-3 flex flex-col min-h-[450px]">
-                <div className={`flex items-center justify-between pb-2 mb-3 border-b ${column.color}`}>
-                  <span className="text-xs font-bold">{column.label}</span>
+                <div className="mb-3 flex items-center justify-between border-b border-zinc-800 pb-2">
+                  <StatusBadge status={column.id} label={column.label} size="sm" />
                   <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-[11px] font-mono text-zinc-300">
                     {colTasks.length}
                   </span>
@@ -598,7 +650,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                     >
                       <div className="flex items-center justify-between text-[10px]">
                         <span className="text-zinc-400">{task.clientName}</span>
-                        <PriorityBadge priority={task.priority} size="sm" showLabel={false} />
+                        <PriorityBadge priority={task.priority} size="sm" />
                       </div>
                       <p className="text-xs font-medium text-zinc-100">{task.title}</p>
                       <div className="flex items-center justify-between pt-1 border-t border-zinc-800/80 text-[10px] text-zinc-400">
@@ -618,6 +670,8 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
         tasks={filteredCompletedTasks}
         onSelectTask={onSelectTask}
         onToggleComplete={onToggleComplete}
+        onUpdateTask={onUpdateTask}
+        projects={projects}
         contextKey={`${selectedAssignee}:${selectedClient}:${selectedProject}`}
       />
     </div>

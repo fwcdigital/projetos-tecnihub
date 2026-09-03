@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Client, 
   NavView, 
   Notification, 
   Project, 
+  ProjectStatusDefinition,
+  RecurrenceRule,
   Task, 
   User 
 } from './types';
@@ -13,6 +15,10 @@ import { clientService } from './services/clientService';
 import { projectService } from './services/projectService';
 import { userService } from './services/userService';
 import { taskService } from './services/taskService';
+import { routineService } from './services/routineService';
+import { isClosedProjectStatus, projectStatusService } from './services/projectStatusService';
+import { authService } from './services/authService';
+import { isAdministrator } from './permissions';
 
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -23,6 +29,7 @@ import { NewProjectModal } from './components/NewProjectModal';
 import { EditProjectModal } from './components/EditProjectModal';
 import { NewClientModal } from './components/NewClientModal';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
+import { ProjectStatusManager } from './components/ProjectStatusManager';
 
 // Views
 import { DashboardView } from './views/DashboardView';
@@ -37,18 +44,38 @@ import { CalendarView } from './views/CalendarView';
 import { ProfileView } from './views/ProfileView';
 import { Loader2 } from 'lucide-react';
 
+const viewFromPath = (pathname: string): NavView => {
+  if (pathname.startsWith('/routines')) return 'RECORRENCIAS';
+  if (pathname.startsWith('/projects/')) return 'PROJETO_DETALHE';
+  if (pathname === '/projects') return 'PROJETOS';
+  if (pathname.startsWith('/clients/')) return 'CLIENTE_DETALHE';
+  if (pathname === '/clients') return 'CLIENTES';
+  if (pathname.startsWith('/team')) return 'EQUIPE';
+  if (pathname.startsWith('/calendar')) return 'CALENDARIO';
+  if (pathname.startsWith('/reports')) return 'RELATORIOS';
+  if (pathname.startsWith('/settings')) return 'CONFIGURACOES';
+  if (pathname.startsWith('/profile')) return 'PERFIL';
+  if (pathname.startsWith('/dashboard')) return 'DASHBOARD';
+  return 'MEU_TRABALHO';
+};
+
 function MainLayout() {
   const { user: authUser, isAuthenticated, isLoading: isAuthLoading } = useAuth();
+  const initialPathRef = useRef(window.location.pathname);
 
   // Navigation & Entity State
-  const [currentView, setCurrentView] = useState<NavView>('MEU_TRABALHO');
+  const [currentView, setCurrentView] = useState<NavView>(() => viewFromPath(window.location.pathname));
   const [currentUser, setCurrentUser] = useState<User | null>(authUser);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [routines, setRoutines] = useState<RecurrenceRule[]>([]);
+  const [projectStatuses, setProjectStatuses] = useState<ProjectStatusDefinition[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [mutationError, setMutationError] = useState('');
   const [isLoadingData, setIsLoadingData] = useState(true);
+  const [routeHydrated, setRouteHydrated] = useState(false);
 
   // Responsive Navigation State
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -56,6 +83,10 @@ function MainLayout() {
 
   // Selected Entities
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [routedTaskId, setRoutedTaskId] = useState<string | null>(() => {
+    const parts = window.location.pathname.split('/').filter(Boolean);
+    return parts[0] === 'tasks' && parts[1] ? parts[1] : null;
+  });
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
 
@@ -81,12 +112,14 @@ function MainLayout() {
     if (!isAuthenticated) return;
     try {
       setIsLoadingData(true);
-      const [fetchedClients, fetchedProjects, fetchedUsers, activeTasks, completedTasks] = await Promise.all([
+      const [fetchedClients, fetchedProjects, fetchedUsers, activeTasks, completedTasks, fetchedRoutines, fetchedProjectStatuses] = await Promise.all([
         clientService.getAll(),
         projectService.getAll(),
         userService.getAll(),
         taskService.getAll(),
-        taskService.getAll({ status: 'CONCLUIDO' })
+        taskService.getAll({ status: 'CONCLUIDO' }),
+        routineService.getAll(),
+        projectStatusService.getAll(Boolean(authUser && isAdministrator(authUser.role)))
       ]);
 
       setClients(fetchedClients);
@@ -94,17 +127,77 @@ function MainLayout() {
       setProjects(fetchedProjects);
       setSelectedProject(fetchedProjects[0] || null);
       setUsers(fetchedUsers);
-      setTasks([...activeTasks, ...completedTasks]);
+      const fetchedTasks = [...activeTasks, ...completedTasks];
+      setTasks(fetchedTasks);
+      setRoutines(fetchedRoutines);
+      setProjectStatuses(fetchedProjectStatuses);
+
+      const pathParts = initialPathRef.current.split('/').filter(Boolean);
+      if (pathParts[0] === 'projects' && pathParts[1]) setSelectedProject(fetchedProjects.find(project => project.id === pathParts[1]) || fetchedProjects[0] || null);
+      if (pathParts[0] === 'clients' && pathParts[1]) setSelectedClient(fetchedClients.find(client => client.id === pathParts[1]) || fetchedClients[0] || null);
+      if (pathParts[0] === 'tasks' && pathParts[1]) {
+        const routedTask = fetchedTasks.find(task => task.id === pathParts[1]) || await taskService.getById(pathParts[1]);
+        if (routedTask) { setSelectedTask(routedTask); setRoutedTaskId(routedTask.id); setIsTaskDrawerOpen(true); }
+      }
     } catch (err) {
       console.error('Erro ao carregar dados do servidor:', err);
     } finally {
+      setRouteHydrated(true);
       setIsLoadingData(false);
     }
+  }, [authUser, isAuthenticated]);
+
+  const refreshRoutines = useCallback(async () => {
+    if (!isAuthenticated) return;
+    setRoutines(await routineService.getAll());
   }, [isAuthenticated]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!mutationError) return;
+    const timeout = window.setTimeout(() => setMutationError(''), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [mutationError]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setRouteHydrated(true);
+      setCurrentView(viewFromPath(window.location.pathname));
+      const parts = window.location.pathname.split('/').filter(Boolean);
+      if (parts[0] === 'tasks' && parts[1]) {
+        const task = tasks.find(item => item.id === parts[1]);
+        setRoutedTaskId(parts[1]);
+        if (task) { setSelectedTask(task); setIsTaskDrawerOpen(true); }
+      } else { setRoutedTaskId(null); setIsTaskDrawerOpen(false); }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [tasks]);
+
+  useEffect(() => {
+    if (routeHydrated && routedTaskId && selectedTask?.id === routedTaskId) setIsTaskDrawerOpen(true);
+  }, [routeHydrated, routedTaskId, selectedTask]);
+
+  useEffect(() => {
+    if (isLoadingData || !routeHydrated) return;
+    let path = '/tasks';
+    if (routedTaskId && selectedTask?.id === routedTaskId) path = `/tasks/${routedTaskId}`;
+    else if (currentView === 'DASHBOARD') path = '/dashboard';
+    else if (currentView === 'RECORRENCIAS') path = '/routines';
+    else if (currentView === 'PROJETOS') path = '/projects';
+    else if (currentView === 'PROJETO_DETALHE' && selectedProject) path = `/projects/${selectedProject.id}`;
+    else if (currentView === 'CLIENTES') path = '/clients';
+    else if (currentView === 'CLIENTE_DETALHE' && selectedClient) path = `/clients/${selectedClient.id}`;
+    else if (currentView === 'EQUIPE') path = '/team';
+    else if (currentView === 'CALENDARIO') path = '/calendar';
+    else if (currentView === 'RELATORIOS') path = '/reports';
+    else if (currentView === 'CONFIGURACOES') path = '/settings';
+    else if (currentView === 'PERFIL') path = '/profile';
+    if (window.location.pathname !== path) window.history.replaceState({}, '', path);
+  }, [currentView, isLoadingData, routeHydrated, routedTaskId, selectedClient, selectedProject, selectedTask]);
 
   // Keyboard shortcut for Cmd+K Search
   useEffect(() => {
@@ -121,6 +214,7 @@ function MainLayout() {
   // Handler: Select Task to Open Drawer
   const handleSelectTask = (task: Task) => {
     setSelectedTask(task);
+    setRoutedTaskId(task.id);
     setIsTaskDrawerOpen(true);
   };
 
@@ -135,14 +229,29 @@ function MainLayout() {
       if (persisted) {
         setTasks(prev => prev.map(t => t.id === persisted.id ? persisted : t));
         setSelectedTask(persisted);
+        await refreshRoutines();
       }
     } catch (err) {
       console.error('Erro ao persistir atualização de tarefa no backend:', err);
+      setMutationError(err instanceof Error ? err.message : 'Não foi possível salvar a tarefa.');
       if (previousTask) {
         setTasks(prev => prev.map(t => t.id === previousTask.id ? previousTask : t));
         setSelectedTask(previousTask);
       }
     }
+  };
+
+  const handleUpdateRoutine = async (id: string, updates: Partial<RecurrenceRule>) => {
+    const saved = await routineService.update(id, updates);
+    setRoutines(previous => previous.map(routine => routine.id === id ? saved : routine));
+  };
+
+  const handleRemoveRoutine = async (id: string) => {
+    await routineService.remove(id);
+    setRoutines(previous => previous.filter(routine => routine.id !== id));
+    setTasks(previous => previous.map(task => task.recurrence?.id === id
+      ? { ...task, isRecurring: false, recurrence: undefined, recurrenceFrequency: 'NAO_REPETIR', recurrenceRule: undefined }
+      : task));
   };
 
   // Handler: Toggle Task Complete
@@ -169,6 +278,7 @@ function MainLayout() {
       if (selectedTask?.id === taskId) setSelectedTask(persisted);
     } catch (err) {
       console.error('Erro ao alternar status da tarefa:', err);
+      setMutationError(err instanceof Error ? err.message : 'Não foi possível alterar o status da tarefa.');
       setTasks(prev => prev.map(t => t.id === taskId ? currentTask : t));
       if (selectedTask?.id === taskId) setSelectedTask(currentTask);
     }
@@ -178,6 +288,7 @@ function MainLayout() {
   const handleAddTask = async (newTaskData: Task) => {
     const created = await taskService.create(newTaskData);
     setTasks(prev => [created, ...prev]);
+    if (created.isRecurring) await refreshRoutines();
 
       // Notification
       const newNotif: Notification = {
@@ -233,22 +344,68 @@ function MainLayout() {
   };
 
   const handleDeleteTask = async (taskId: string) => {
-    const deleted = await taskService.delete(taskId);
-    if (!deleted) throw new Error('Não foi possível excluir a tarefa.');
-    setTasks(previous => previous.filter(task => task.id !== taskId));
-    setSelectedTask(null);
-    setIsTaskDrawerOpen(false);
+    try {
+      const deleted = await taskService.delete(taskId);
+      if (!deleted) throw new Error('Não foi possível excluir a tarefa.');
+      setTasks(previous => previous.filter(task => task.id !== taskId));
+      setSelectedTask(null);
+      setRoutedTaskId(null);
+      setIsTaskDrawerOpen(false);
+    } catch (error) {
+      setMutationError(error instanceof Error ? error.message : 'Não foi possível excluir a tarefa.');
+    }
+  };
+
+  const persistProjectUpdate = async (project: Project, data: Partial<Project>, teamUserIds?: string[]) => {
+    setMutationError('');
+    const optimistic = { ...project, ...data };
+    setProjects(previous => previous.map(item => item.id === project.id ? optimistic : item));
+    setSelectedProject(previous => previous?.id === project.id ? optimistic : previous);
+
+    try {
+      const saved = await projectService.update(project.id, data, teamUserIds);
+      setProjects(previous => previous.map(item => item.id === saved.id ? saved : item));
+      setSelectedProject(previous => previous?.id === saved.id ? saved : previous);
+    } catch (error) {
+      setProjects(previous => previous.map(item => item.id === project.id ? project : item));
+      setSelectedProject(previous => previous?.id === project.id ? project : previous);
+      setMutationError(error instanceof Error ? error.message : 'Não foi possível salvar o projeto.');
+      throw error;
+    }
   };
 
   const handleUpdateProject = async (data: Partial<Project>, teamUserIds?: string[]) => {
     if (!selectedProject) return;
-    const saved = await projectService.update(selectedProject.id, data, teamUserIds);
-    setProjects(previous => previous.map(project => project.id === saved.id ? saved : project));
-    setSelectedProject(saved);
+    await persistProjectUpdate(selectedProject, data, teamUserIds);
+  };
+
+  const handleInlineUpdateProject = async (project: Project, data: Partial<Project>, teamUserIds?: string[]) => {
+    try {
+      await persistProjectUpdate(project, data, teamUserIds);
+    } catch {
+      // A mensagem e o rollback já são tratados pela mutation compartilhada.
+    }
   };
 
   const handleSaveBriefing = async (briefing: Record<string, string>) => {
     await handleUpdateProject({ briefing });
+  };
+
+  const handleRefreshSelectedProject = async () => {
+    if (!selectedProject) return;
+    const saved = await projectService.getById(selectedProject.id);
+    setProjects(previous => previous.map(project => project.id === saved.id ? saved : project));
+    setSelectedProject(saved);
+  };
+
+  const handleProjectStatusesChanged = async () => {
+    const [statuses, refreshedProjects] = await Promise.all([
+      projectStatusService.getAll(isAdministrator(currentUser.role)),
+      projectService.getAll()
+    ]);
+    setProjectStatuses(statuses);
+    setProjects(refreshedProjects);
+    if (selectedProject) setSelectedProject(refreshedProjects.find(project => project.id === selectedProject.id) || null);
   };
 
   const handleCreateUser = async (data: any) => {
@@ -307,6 +464,7 @@ function MainLayout() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#09090b] text-zinc-100 font-sans antialiased selection:bg-emerald-500/30 selection:text-emerald-300">
+      {mutationError && <div className="fixed bottom-5 right-5 z-[120] max-w-sm rounded-lg border border-rose-500/30 bg-[#211216] px-3 py-2 text-xs text-rose-200 shadow-2xl">{mutationError}</div>}
       {/* Left Sidebar Navigation (Desktop + Mobile Drawer) */}
       <Sidebar
         currentView={currentView}
@@ -354,13 +512,16 @@ function MainLayout() {
               tasks={activeTasks}
               completedTasks={completedTasks}
               projects={projects}
+              projectStatuses={projectStatuses}
               clients={clients}
               users={users}
               onSelectTask={handleSelectTask}
               onToggleComplete={handleToggleComplete}
+              onUpdateTask={handleUpdateTask}
               onNavigate={(view) => setCurrentView(view)}
               onOpenNewTask={() => setIsNewTaskModalOpen(true)}
               onOpenNewProject={canCreateProject ? () => setIsNewProjectModalOpen(true) : undefined}
+              onUpdateProject={handleInlineUpdateProject}
             />
           )}
 
@@ -374,6 +535,7 @@ function MainLayout() {
               users={users}
               onSelectTask={handleSelectTask}
               onToggleComplete={handleToggleComplete}
+              onUpdateTask={handleUpdateTask}
               onOpenNewTask={() => setIsNewTaskModalOpen(true)}
             />
           )}
@@ -383,23 +545,32 @@ function MainLayout() {
               projects={projects}
               clients={clients}
               tasks={activeTasks}
+              users={users}
+              currentUser={currentUser}
               onSelectProject={handleNavigateProjectDetail}
               onOpenNewProject={canCreateProject ? () => setIsNewProjectModalOpen(true) : undefined}
+              projectStatuses={projectStatuses}
+              onUpdateProject={handleInlineUpdateProject}
             />
           )}
 
           {currentView === 'PROJETO_DETALHE' && selectedProject && (
             <ProjectDetailView
               project={selectedProject}
+              projects={projects}
               tasks={activeTasks}
               completedTasks={completedTasks}
               currentUser={currentUser}
               onBack={() => setCurrentView('PROJETOS')}
               onSelectTask={handleSelectTask}
               onToggleComplete={handleToggleComplete}
+              onUpdateTask={handleUpdateTask}
               onOpenNewTask={() => handleOpenNewTaskModal({ projectId: selectedProject.id, clientId: selectedProject.clientId })}
               onOpenEditProject={currentUser.role !== 'COLABORADOR' ? () => setIsEditProjectModalOpen(true) : undefined}
               onSaveBriefing={handleSaveBriefing}
+              onProjectRefresh={handleRefreshSelectedProject}
+              projectStatuses={projectStatuses}
+              onUpdateProject={handleInlineUpdateProject}
             />
           )}
 
@@ -416,6 +587,8 @@ function MainLayout() {
           {currentView === 'CLIENTE_DETALHE' && selectedClient && (
             <ClientDetailView
               client={selectedClient}
+              currentUser={currentUser}
+              projectStatuses={projectStatuses}
               projects={projects}
               tasks={activeTasks}
               completedTasks={completedTasks}
@@ -423,11 +596,13 @@ function MainLayout() {
               onSelectProject={handleNavigateProjectDetail}
               onSelectTask={handleSelectTask}
               onToggleComplete={handleToggleComplete}
+              onUpdateTask={handleUpdateTask}
               onOpenNewTask={() => handleOpenNewTaskModal({ clientId: selectedClient.id })}
               onOpenNewProject={canCreateProject ? () => {
                 setNewProjectClientId(selectedClient.id);
                 setIsNewProjectModalOpen(true);
               } : undefined}
+              onUpdateProject={handleInlineUpdateProject}
             />
           )}
 
@@ -436,24 +611,23 @@ function MainLayout() {
               users={users}
               tasks={activeTasks}
               completedTasks={completedTasks}
+              projects={projects}
               currentUser={currentUser}
               onCreateUser={handleCreateUser}
               onUpdateUser={handleUpdateUser}
               onSelectTask={handleSelectTask}
               onToggleComplete={handleToggleComplete}
+              onUpdateTask={handleUpdateTask}
             />
           )}
 
           {currentView === 'RECORRENCIAS' && (
             <RecurrencesView
-              tasks={activeTasks}
-              completedTasks={completedTasks}
-              projects={projects}
-              clients={clients}
+              routines={routines}
+              tasks={tasks}
               onSelectTask={handleSelectTask}
-              onToggleComplete={handleToggleComplete}
-              onUpdateTask={handleUpdateTask}
-              onOpenNewTask={() => setIsNewTaskModalOpen(true)}
+              onUpdateRoutine={handleUpdateRoutine}
+              onRemoveRoutine={handleRemoveRoutine}
             />
           )}
 
@@ -468,7 +642,7 @@ function MainLayout() {
           )}
 
           {currentView === 'PERFIL' && (
-            <ProfileView currentUser={currentUser} />
+            <ProfileView currentUser={currentUser} onChangePassword={authService.changePassword} />
           )}
 
           {currentView === 'CONFIGURACOES' && (
@@ -489,6 +663,7 @@ function MainLayout() {
                   <span className="inline-block mt-3 px-2 py-1 bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[10px] font-bold rounded">Pronto para Produção / VPS</span>
                 </div>
               </div>
+              {isAdministrator(currentUser.role) && <ProjectStatusManager statuses={projectStatuses} onChanged={handleProjectStatusesChanged} />}
             </div>
           )}
 
@@ -508,7 +683,7 @@ function MainLayout() {
                 <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
                   <span className="text-xs text-zinc-400">Projetos em Andamento</span>
                   <p className="text-2xl font-black text-sky-400 mt-1">
-                    {projects.filter(p => p.status === 'EM_ANDAMENTO').length}
+                    {projects.filter(project => !isClosedProjectStatus(project.status)).length}
                   </p>
                 </div>
                 <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
@@ -531,16 +706,16 @@ function MainLayout() {
       </div>
 
       {/* Task Detail Slide-over Drawer */}
-      <TaskDrawer
+      {selectedTask && isTaskDrawerOpen && <TaskDrawer
         task={selectedTask}
         isOpen={isTaskDrawerOpen}
-        onClose={() => setIsTaskDrawerOpen(false)}
+        onClose={() => { setRoutedTaskId(null); setIsTaskDrawerOpen(false); }}
         onUpdateTask={handleUpdateTask}
         onDeleteTask={handleDeleteTask}
         currentUser={currentUser}
         users={users}
         projects={projects}
-      />
+      />}
 
       {/* Creation Modals */}
       <NewTaskModal
@@ -569,6 +744,7 @@ function MainLayout() {
         users={users}
         currentUser={currentUser}
         defaultClientId={newProjectClientId}
+        projectStatuses={projectStatuses.filter(status => status.active)}
       />
 
       {selectedProject && <EditProjectModal
@@ -579,6 +755,7 @@ function MainLayout() {
         clients={clients}
         users={users}
         currentUser={currentUser}
+        projectStatuses={projectStatuses}
       />}
 
       <NewClientModal

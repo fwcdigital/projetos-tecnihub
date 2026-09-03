@@ -1,5 +1,5 @@
 import React from 'react';
-import { Client, Project, Task, User } from '../types';
+import { Client, Project, ProjectStatusDefinition, Task, User } from '../types';
 import { TaskRow } from '../components/TaskRow';
 import { CompletedTasksSection } from '../components/CompletedTasksSection';
 import { 
@@ -14,10 +14,15 @@ import {
   Repeat,
   CheckSquare
 } from 'lucide-react';
-import { StatusBadge } from '../components/StatusBadge';
+import { PriorityPicker } from '../components/PriorityPicker';
+import { StatusPicker } from '../components/StatusPicker';
+import { getProjectStatusOptions } from '../components/visualTokens';
+import { canManageProjectOperations } from '../permissions';
 
 interface ClientDetailViewProps {
   client: Client;
+  currentUser: User;
+  projectStatuses: ProjectStatusDefinition[];
   projects: Project[];
   tasks: Task[];
   completedTasks: Task[];
@@ -25,12 +30,16 @@ interface ClientDetailViewProps {
   onSelectProject: (project: Project) => void;
   onSelectTask: (task: Task) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
+  onUpdateTask: (task: Task) => void;
   onOpenNewTask: () => void;
   onOpenNewProject?: () => void;
+  onUpdateProject: (project: Project, updates: Partial<Project>, teamUserIds?: string[]) => Promise<void>;
 }
 
 export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
   client,
+  currentUser,
+  projectStatuses,
   projects,
   tasks,
   completedTasks,
@@ -38,9 +47,12 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
   onSelectProject,
   onSelectTask,
   onToggleComplete,
+  onUpdateTask,
   onOpenNewTask,
-  onOpenNewProject
+  onOpenNewProject,
+  onUpdateProject
 }) => {
+  const canManageProjects = canManageProjectOperations(currentUser.role);
   const clientProjects = projects.filter(p => p.clientId === client.id);
   const clientTasks = tasks.filter(t => t.clientId === client.id);
   const clientCompletedTasks = completedTasks.filter(t => t.clientId === client.id);
@@ -177,7 +189,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
             >
               <div className="flex items-center justify-between">
                 <span className="font-bold text-sm text-zinc-100">{p.name}</span>
-                <StatusBadge status={p.status} size="sm" />
+                <div className="flex items-center gap-1.5"><PriorityPicker value={p.priority} onChange={canManageProjects ? priority => void onUpdateProject(p, { priority }) : undefined} /><StatusPicker value={p.status} options={getProjectStatusOptions(projectStatuses, { value: p.status, label: p.statusName, color: p.statusColor })} onChange={canManageProjects ? status => void onUpdateProject(p, { status }) : undefined} ariaLabel={`Alterar status de ${p.name}`} /></div>
               </div>
               <p className="text-xs text-zinc-400 line-clamp-1">{p.description}</p>
               <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-1 border-t border-zinc-800/80">
@@ -204,13 +216,17 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
               key={task.id}
               task={task}
               onSelectTask={onSelectTask}
-              onToggleComplete={onToggleComplete}
+                    onToggleComplete={onToggleComplete}
+              onUpdateTask={onUpdateTask}
+              projects={projects}
             />
           ))}
           <CompletedTasksSection
             tasks={clientCompletedTasks}
             onSelectTask={onSelectTask}
             onToggleComplete={onToggleComplete}
+            onUpdateTask={onUpdateTask}
+            projects={projects}
             contextKey={client.id}
           />
         </div>

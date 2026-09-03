@@ -1,13 +1,30 @@
-import { Router, Response } from 'express';
-import { projectRepository, clientRepository, userRepository, ProjectStatus, ProjectType, Priority } from '../db.js';
+import express, { Router, Response } from 'express';
+import { randomUUID } from 'node:crypto';
+import { projectRepository, projectResourceRepository, projectStatusRepository, clientRepository, userRepository, ProjectStatus, ProjectType, Priority } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 import { isUuid } from '../validation.js';
+import { canEditProjectDates, canManageProjectOperations, canManageProjectTeam, isAdministrator } from '../permissions.js';
 
 export const projectRouter = Router();
 
-const PROJECT_STATUSES: ProjectStatus[] = ['PLANNING', 'WAITING_TO_START', 'IN_PROGRESS', 'WAITING_CLIENT', 'IN_REVIEW', 'PAUSED', 'COMPLETED', 'CANCELLED'];
 const PROJECT_TYPES: ProjectType[] = ['WEBSITE', 'LANDING_PAGE', 'ECOMMERCE', 'GOOGLE_ADS', 'META_ADS', 'SEO', 'SOCIAL_MEDIA', 'MAINTENANCE', 'INTERNAL', 'OTHER'];
 const PRIORITIES: Priority[] = ['URGENT', 'HIGH', 'NORMAL', 'LOW'];
+const FILE_TYPES = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+
+function storageConfig() {
+  const url = process.env.SUPABASE_URL?.replace(/\/$/, '');
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const bucket = process.env.SUPABASE_STORAGE_BUCKET || 'project-resources';
+  return url && key ? { url, key, bucket } : null;
+}
+
+function canManageProject(req: AuthRequest): boolean {
+  return canManageProjectOperations(req.user);
+}
+
+function encodedStoragePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
 
 async function getInvalidTeamMemberId(teamUserIds: unknown): Promise<string | null> {
   if (teamUserIds === undefined) return null;
@@ -37,6 +54,107 @@ projectRouter.get('/', authenticateToken, async (req: AuthRequest, res: Response
     return res.json({ projects });
   } catch (error) {
     return res.status(500).json({ error: 'Erro ao buscar projetos.' });
+  }
+});
+
+projectRouter.post('/:id/resources/drive', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const project = isUuid(req.params.id) ? await projectRepository.findById(req.params.id, req.user) : null;
+    if (!project) return res.status(404).json({ error: 'Projeto não encontrado.' });
+    if (!canManageProject(req)) return res.status(403).json({ error: 'Sem permissão para alterar materiais do projeto.' });
+    const name = String(req.body.name || '').trim();
+    const value = String(req.body.url || '').trim();
+    let parsed: URL;
+    try { parsed = new URL(value); } catch { return res.status(400).json({ error: 'Informe um link válido do Google Drive.' }); }
+    if (parsed.protocol !== 'https:' || !['drive.google.com', 'docs.google.com'].includes(parsed.hostname)) {
+      return res.status(400).json({ error: 'Informe um link válido do Google Drive.' });
+    }
+    const resource = await projectResourceRepository.create({
+      project_id: project.id, kind: 'GOOGLE_DRIVE', name: name || 'Material no Google Drive',
+      url: parsed.toString(), storage_path: null, mime_type: null, size_bytes: null, created_by: req.user!.id
+    });
+    return res.status(201).json({ success: true, resource });
+  } catch (error) {
+    console.error('Erro ao adicionar link do Drive:', error);
+    return res.status(500).json({ error: 'Erro ao adicionar material.' });
+  }
+});
+
+projectRouter.post(
+  '/:id/resources/upload',
+  authenticateToken,
+  express.raw({ type: FILE_TYPES, limit: '20mb' }),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const project = isUuid(req.params.id) ? await projectRepository.findById(req.params.id, req.user) : null;
+      if (!project) return res.status(404).json({ error: 'Projeto não encontrado.' });
+      if (!canManageProject(req)) return res.status(403).json({ error: 'Sem permissão para alterar materiais do projeto.' });
+      const mimeType = String(req.headers['content-type'] || '').split(';')[0];
+      if (!FILE_TYPES.includes(mimeType)) return res.status(415).json({ error: 'Envie um arquivo PDF ou DOCX.' });
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) return res.status(400).json({ error: 'Arquivo vazio.' });
+      const config = storageConfig();
+      if (!config) return res.status(503).json({ error: 'Supabase Storage ainda não foi configurado no servidor.' });
+      const originalName = decodeURIComponent(String(req.query.filename || 'material')).replace(/[\\/]/g, '-').slice(0, 180);
+      const storagePath = `${project.id}/${randomUUID()}-${originalName}`;
+      const upload = await fetch(`${config.url}/storage/v1/object/${config.bucket}/${encodedStoragePath(storagePath)}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.key}`, apikey: config.key, 'Content-Type': mimeType, 'x-upsert': 'false' },
+        body: req.body
+      });
+      if (!upload.ok) throw new Error(`Supabase Storage respondeu ${upload.status}`);
+      const resource = await projectResourceRepository.create({
+        project_id: project.id, kind: 'FILE', name: originalName, url: null, storage_path: storagePath,
+        mime_type: mimeType, size_bytes: req.body.length, created_by: req.user!.id
+      });
+      return res.status(201).json({ success: true, resource });
+    } catch (error) {
+      console.error('Erro ao enviar material:', error);
+      return res.status(500).json({ error: 'Erro ao enviar material para o Storage.' });
+    }
+  }
+);
+
+projectRouter.get('/:projectId/resources/:resourceId/open', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const resource = isUuid(req.params.resourceId) ? await projectResourceRepository.findById(req.params.resourceId) : null;
+    if (!resource || resource.project_id !== req.params.projectId) return res.status(404).json({ error: 'Material não encontrado.' });
+    const project = await projectRepository.findById(resource.project_id, req.user);
+    if (!project) return res.status(403).json({ error: 'Acesso negado.' });
+    if (resource.kind === 'GOOGLE_DRIVE') return res.redirect(resource.url);
+    const config = storageConfig();
+    if (!config) return res.status(503).json({ error: 'Supabase Storage ainda não foi configurado no servidor.' });
+    const download = await fetch(`${config.url}/storage/v1/object/authenticated/${config.bucket}/${encodedStoragePath(resource.storage_path)}`, {
+      headers: { Authorization: `Bearer ${config.key}`, apikey: config.key }
+    });
+    if (!download.ok) return res.status(404).json({ error: 'Arquivo não encontrado no Storage.' });
+    res.setHeader('Content-Type', resource.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(resource.name)}`);
+    return res.send(Buffer.from(await download.arrayBuffer()));
+  } catch {
+    return res.status(500).json({ error: 'Erro ao abrir material.' });
+  }
+});
+
+projectRouter.delete('/:projectId/resources/:resourceId', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const resource = isUuid(req.params.resourceId) ? await projectResourceRepository.findById(req.params.resourceId) : null;
+    if (!resource || resource.project_id !== req.params.projectId) return res.status(404).json({ error: 'Material não encontrado.' });
+    const project = await projectRepository.findById(resource.project_id, req.user);
+    if (!project) return res.status(403).json({ error: 'Acesso negado.' });
+    if (!canManageProject(req)) return res.status(403).json({ error: 'Sem permissão para remover materiais.' });
+    if (resource.storage_path) {
+      const config = storageConfig();
+      if (!config) return res.status(503).json({ error: 'Supabase Storage ainda não foi configurado no servidor.' });
+      const removal = await fetch(`${config.url}/storage/v1/object/${config.bucket}/${encodedStoragePath(resource.storage_path)}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${config.key}`, apikey: config.key }
+      });
+      if (!removal.ok && removal.status !== 404) throw new Error(`Supabase Storage respondeu ${removal.status}`);
+    }
+    await projectResourceRepository.delete(resource.id);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Erro ao remover material:', error);
+    return res.status(500).json({ error: 'Erro ao remover material.' });
   }
 });
 
@@ -100,11 +218,15 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
     if (req.user?.role === 'PROJECT_MANAGER' && chosenManagerId !== req.user.id) {
       return res.status(403).json({ error: 'Gestores de projeto só podem criar projetos sob sua própria gestão.' });
     }
+    if (!canEditProjectDates(req.user) && (start_date !== undefined || due_date !== undefined)) {
+      return res.status(403).json({ error: 'Somente administradores podem definir as datas estruturais do projeto.' });
+    }
 
     if (project_type && !PROJECT_TYPES.includes(project_type)) {
       return res.status(400).json({ error: 'Tipo de projeto inválido.' });
     }
-    if (status && !PROJECT_STATUSES.includes(status)) {
+    const selectedStatus = status ? await projectStatusRepository.findById(String(status)) : await projectStatusRepository.findById('PLANNING');
+    if (!selectedStatus || !selectedStatus.active) {
       return res.status(400).json({ error: 'Status de projeto inválido.' });
     }
     if (priority && !PRIORITIES.includes(priority)) {
@@ -124,7 +246,7 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
       manager_id: chosenManagerId,
       status: (status as ProjectStatus) || 'PLANNING',
       priority: (priority as Priority) || 'NORMAL',
-      start_date: start_date || new Date().toISOString().split('T')[0],
+      start_date: start_date || null,
       due_date: due_date || undefined,
       progress: typeof progress === 'number' ? Math.max(0, Math.min(100, progress)) : 0,
       is_recurring: Boolean(is_recurring),
@@ -156,9 +278,8 @@ projectRouter.put('/:id', authenticateToken, async (req: AuthRequest, res: Respo
     }
 
     // Administradores editam tudo; gestores com acesso editam apenas campos operacionais.
-    const isSuperOrAdmin = req.user?.role === 'SUPER_ADMIN' || req.user?.role === 'ADMIN';
-    const isProjectManager = req.user?.role === 'PROJECT_MANAGER';
-    if (!isSuperOrAdmin && !isProjectManager) {
+    const isSuperOrAdmin = isAdministrator(req.user);
+    if (!canManageProjectOperations(req.user)) {
       return res.status(403).json({ error: 'Você não possui controles administrativos deste projeto.' });
     }
 
@@ -178,8 +299,14 @@ projectRouter.put('/:id', authenticateToken, async (req: AuthRequest, res: Respo
       team_user_ids
     } = req.body;
 
-    if (!isSuperOrAdmin && (client_id !== undefined || manager_id !== undefined || team_user_ids !== undefined)) {
-      return res.status(403).json({ error: 'Somente administradores podem trocar cliente, gestor ou colaboradores.' });
+    if (!isSuperOrAdmin && manager_id !== undefined) {
+      return res.status(403).json({ error: 'Somente administradores podem trocar o responsável principal do projeto.' });
+    }
+    if (!canEditProjectDates(req.user) && (start_date !== undefined || due_date !== undefined)) {
+      return res.status(403).json({ error: 'Somente administradores podem alterar as datas estruturais do projeto.' });
+    }
+    if (!canManageProjectTeam(req.user) && team_user_ids !== undefined) {
+      return res.status(403).json({ error: 'Sem permissão para alterar a equipe do projeto.' });
     }
 
     if (req.user?.role === 'PROJECT_MANAGER' && manager_id && manager_id !== req.user.id) {
@@ -203,8 +330,11 @@ projectRouter.put('/:id', authenticateToken, async (req: AuthRequest, res: Respo
     if (project_type && !PROJECT_TYPES.includes(project_type)) {
       return res.status(400).json({ error: 'Tipo de projeto inválido.' });
     }
-    if (status && !PROJECT_STATUSES.includes(status)) {
-      return res.status(400).json({ error: 'Status de projeto inválido.' });
+    if (status) {
+      const selectedStatus = await projectStatusRepository.findById(String(status));
+      if (!selectedStatus || (!selectedStatus.active && status !== existing.status)) {
+        return res.status(400).json({ error: 'Status de projeto inválido ou inativo.' });
+      }
     }
     if (priority && !PRIORITIES.includes(priority)) {
       return res.status(400).json({ error: 'Prioridade de projeto inválida.' });
@@ -240,6 +370,7 @@ projectRouter.put('/:id', authenticateToken, async (req: AuthRequest, res: Respo
       project: updated
     });
   } catch (error) {
+    console.error('Erro ao atualizar projeto:', error);
     return res.status(500).json({ error: 'Erro ao atualizar projeto.' });
   }
 });

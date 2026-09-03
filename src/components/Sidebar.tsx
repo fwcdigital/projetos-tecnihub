@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { TecnihubLogo } from './TecnihubLogo';
 import { User, NavView } from '../types';
+import { useAuth } from '../context/AuthContext';
 export type { NavView } from '../types';
 
 interface SidebarProps {
@@ -47,6 +48,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isMobileOpen = false,
   onCloseMobile,
 }) => {
+  const { logout } = useAuth();
   const mainNavItems = [
     {
       id: 'DASHBOARD' as NavView,
@@ -56,7 +58,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'MEU_TRABALHO' as NavView,
-      label: 'Meu Trabalho',
+      label: 'Tarefas',
       icon: CheckSquare,
       badge: overdueCount > 0 ? (
         <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[10px] font-bold">
@@ -103,11 +105,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'RECORRENCIAS' as NavView,
-      label: 'Recorrências',
+      label: 'Rotinas',
       icon: Repeat,
       badge: (
         <span className="px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-medium">
-          Fixos
+          Regras
         </span>
       ),
     },
@@ -165,7 +167,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex-1 overflow-y-auto">
           <div className="flex items-center justify-between px-3.5 py-4 border-b border-[#1e1e24]/80">
             <div 
-              onClick={() => handleItemClick('DASHBOARD')}
+              onClick={logout}
               className="cursor-pointer overflow-hidden transition-opacity hover:opacity-90 min-h-[36px] flex items-center"
             >
               <TecnihubLogo collapsed={collapsed} size="sm" />
@@ -295,7 +297,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               onClick={() => handleItemClick('DASHBOARD')}
               className={`p-1.5 rounded text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors ${collapsed ? 'md:hidden' : 'block'}`}
-              title="Ir para Dashboard"
+              title="Encerrar sessão"
             >
               <LogOut size={15} />
             </button>

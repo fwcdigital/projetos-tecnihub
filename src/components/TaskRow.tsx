@@ -1,27 +1,31 @@
-import React from 'react';
-import { Task } from '../types';
-import { StatusBadge } from './StatusBadge';
-import { PriorityBadge } from './PriorityBadge';
+import React, { useState } from 'react';
+import { Project, Task, TaskStatus } from '../types';
 import { 
   Check, 
   MessageSquare, 
   CheckSquare, 
-  Repeat, 
-  Paperclip, 
-  Clock, 
-  AlertTriangle,
-  MoreHorizontal,
-  FolderKanban,
-  Building2,
-  Calendar
+  Paperclip
 } from 'lucide-react';
-import { UserAvatar } from './UserAvatar';
+import { AvatarGroup } from './AvatarGroup';
+import { AssigneePicker } from './AssigneePicker';
+import { ExpandableTaskChildren } from './ExpandableTaskChildren';
+import { HierarchyExpandButton } from './HierarchyExpandButton';
+import { InlineTitleEditor } from './InlineTitleEditor';
+import { PriorityPicker } from './PriorityPicker';
+import { RecurrencePopover } from './RecurrencePopover';
+import { TaskContextPicker } from './TaskContextPicker';
+import { TaskDateRangePicker } from './TaskDateRangePicker';
+import { TaskActionsMenu } from './TaskActionsMenu';
+import { StatusPicker } from './StatusPicker';
+import { TASK_STATUS_OPTIONS } from './visualTokens';
 
 interface TaskRowProps {
   task: Task;
   onSelectTask: (task: Task) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
   showDate?: boolean;
+  onUpdateTask?: (task: Task) => void;
+  projects?: Project[];
 }
 
 export const TaskRow: React.FC<TaskRowProps> = ({
@@ -29,53 +33,36 @@ export const TaskRow: React.FC<TaskRowProps> = ({
   onSelectTask,
   onToggleComplete,
   showDate = true,
+  onUpdateTask,
+  projects = [],
 }) => {
+  const [expanded, setExpanded] = useState(false);
   const isCompleted = task.status === 'CONCLUIDO';
+  const assignees = task.assignees?.length ? task.assignees : [{ id: task.assigneeId, name: task.assigneeName, avatar: task.assigneeAvatar, position: 'Responsável' }];
+  const hasChildren = task.subtasks.length > 0 || task.checklist.length > 0;
   
   // Calculate checklist progress
   const totalChecklist = task.checklist.length;
   const completedChecklist = task.checklist.filter(c => c.completed).length;
 
-  // Format date helper and alert condition
-  const getDueDateDisplay = () => {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const isOverdue = task.dueDate < todayStr && !isCompleted;
-    const isToday = task.dueDate === todayStr;
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const isTomorrow = task.dueDate === tomorrow.toISOString().slice(0, 10);
-
-    let dateText = task.dueDate.split('-').reverse().slice(0, 2).join('/');
-    if (isToday) dateText = 'Hoje';
-    else if (isTomorrow) dateText = 'Amanhã';
-
-    if (task.dueTime) {
-      dateText += ` ${task.dueTime}`;
-    }
-
-    return {
-      text: dateText,
-      isOverdue,
-      isToday,
-      isTomorrow,
-    };
-  };
-
-  const dueInfo = getDueDateDisplay();
+  const isOverdue = task.dueDate < new Date().toISOString().slice(0, 10) && !isCompleted;
 
   return (
+    <div>
     <div
-      onClick={() => onSelectTask(task)}
-      className={`group relative flex flex-col md:flex-row md:items-center justify-between p-2.5 sm:px-3.5 sm:py-2.5 rounded-lg border transition-all cursor-pointer select-none gap-2 md:gap-3.5 overflow-hidden ${
+      className={`group relative flex flex-col justify-between gap-1.5 overflow-visible rounded-lg border px-2.5 py-1.5 transition-all md:flex-row md:items-center md:gap-2.5 ${
         isCompleted 
           ? 'bg-[#101014]/60 border-zinc-800/40 opacity-70 hover:opacity-100' 
-          : dueInfo.isOverdue
+          : isOverdue
             ? 'bg-rose-950/10 border-rose-900/30 hover:border-rose-700/50 hover:bg-rose-950/20'
             : 'bg-[#121216] border-[#22222a] hover:border-zinc-700 hover:bg-[#18181f]'
       }`}
     >
       {/* Left section: Checkbox + Priority + Task Title + Client & Project tags */}
-      <div className="flex items-center gap-2.5 min-w-0 flex-1 overflow-hidden">
+      <div className="flex min-w-0 flex-1 items-center gap-2.5 overflow-visible">
+        {hasChildren ? (
+          <HierarchyExpandButton expanded={expanded} count={task.subtasks.length + task.checklist.length} onToggle={() => setExpanded(value => !value)} />
+        ) : <span className="w-4" />}
         {/* ClickUp-style Checkbox */}
         <button
           onClick={(e) => onToggleComplete(task.id, e)}
@@ -90,42 +77,17 @@ export const TaskRow: React.FC<TaskRowProps> = ({
         </button>
 
         {/* Priority Badge */}
-        <div className="flex-shrink-0">
-          <PriorityBadge priority={task.priority} size="sm" showLabel={false} />
-        </div>
+        <div className="flex-shrink-0"><PriorityPicker value={task.priority} onChange={onUpdateTask ? priority => onUpdateTask({ ...task, priority }) : undefined} /></div>
 
         {/* Title and Metadata */}
-        <div className="flex flex-col lg:flex-row lg:items-center gap-1 lg:gap-2.5 min-w-0 flex-1 overflow-hidden">
-          <span 
-            className={`text-xs font-semibold text-zinc-100 truncate flex-shrink min-w-0 ${
-              isCompleted ? 'line-through text-zinc-400 font-normal' : ''
-            }`}
-            title={task.title}
-          >
-            {task.title}
-          </span>
+        <div className="flex min-w-0 flex-1 flex-col gap-1 overflow-visible lg:flex-row lg:items-center lg:gap-2.5">
+          <InlineTitleEditor value={task.title} completed={isCompleted} onOpen={() => onSelectTask(task)} onSave={onUpdateTask ? title => onUpdateTask({ ...task, title }) : undefined} />
 
           {/* Client & Project Badges */}
           <div className="flex items-center gap-1.5 flex-wrap min-w-0 flex-shrink">
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-zinc-800/90 text-zinc-300 text-[10px] font-medium border border-zinc-700/60 max-w-[120px] truncate">
-              <Building2 size={10} className="text-zinc-400 flex-shrink-0" />
-              <span className="truncate">{task.clientName}</span>
-            </span>
-
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 text-[10px] font-medium border border-zinc-800 max-w-[120px] truncate">
-              <FolderKanban size={10} className="text-zinc-500 flex-shrink-0" />
-              <span className="truncate">{task.projectName}</span>
-            </span>
-
-            {task.isRecurring && (
-              <span 
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-medium flex-shrink-0"
-                title={`Recorrência: ${task.recurrenceRule || 'Recorrente'}`}
-              >
-                <Repeat size={10} className="flex-shrink-0" />
-                <span>Recorrente</span>
-              </span>
-            )}
+            <TaskContextPicker task={task} projects={projects} mode="CLIENT" onChange={onUpdateTask ? project => onUpdateTask({ ...task, projectId: project.id, projectName: project.name, clientId: project.clientId, clientName: project.clientName }) : undefined} />
+            <TaskContextPicker task={task} projects={projects} mode="PROJECT" onChange={onUpdateTask ? project => onUpdateTask({ ...task, projectId: project.id, projectName: project.name, clientId: project.clientId, clientName: project.clientName }) : undefined} />
+            {task.isRecurring && task.recurrence && <RecurrencePopover task={task} onChange={onUpdateTask} />}
           </div>
         </div>
       </div>
@@ -162,53 +124,23 @@ export const TaskRow: React.FC<TaskRowProps> = ({
         </div>
 
         {/* Due Date & Time indicator with intelligent color coding */}
-        {showDate && (
-          <div 
-            className={`flex items-center gap-1 text-[11px] px-2 py-0.5 rounded font-mono font-medium flex-shrink-0 ${
-              dueInfo.isOverdue
-                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse'
-                : dueInfo.isToday
-                  ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                  : dueInfo.isTomorrow
-                    ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
-                    : 'text-zinc-400 bg-zinc-900 border border-zinc-800'
-            }`}
-            title={`Prazo: ${task.dueDate} ${task.dueTime || ''}`}
-          >
-            {dueInfo.isOverdue ? (
-              <AlertTriangle size={11} className="text-rose-400 flex-shrink-0" />
-            ) : (
-              <Clock size={11} className="flex-shrink-0" />
-            )}
-            <span className="whitespace-nowrap">{dueInfo.text}</span>
-          </div>
-        )}
+        {showDate && <TaskDateRangePicker task={task} onChange={onUpdateTask} />}
 
         {/* Assignee Avatar & Tooltip */}
-        <div className="flex items-center gap-1.5 flex-shrink-0" title={`Responsável: ${task.assigneeName}`}>
-          <UserAvatar name={task.assigneeName} src={task.assigneeAvatar} className="w-5 h-5" />
-          <span className="text-[11px] text-zinc-300 font-medium hidden lg:inline max-w-[80px] truncate">
-            {task.assigneeName.split(' ')[0]}
-          </span>
+        <div className="flex-shrink-0">
+          {onUpdateTask && task.availableAssignees?.length ? <AssigneePicker users={task.availableAssignees} selectedIds={task.participantIds} selectedAssignees={assignees} onChange={participantIds => onUpdateTask({ ...task, participantIds })} label="" /> : <AvatarGroup assignees={assignees} />}
         </div>
 
         {/* Status Badge */}
-        <div className="flex-shrink-0">
-          <StatusBadge status={task.status} size="sm" />
+        <div className="flex-shrink-0" onClick={event => event.stopPropagation()}>
+          <StatusPicker value={task.status} options={TASK_STATUS_OPTIONS} onChange={onUpdateTask ? status => onUpdateTask({ ...task, status: status as TaskStatus }) : undefined} ariaLabel={`Alterar status de ${task.title}`} />
         </div>
 
         {/* Quick Row Action */}
-        <button 
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelectTask(task);
-          }}
-          className="p-1 rounded text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition-opacity hidden sm:block flex-shrink-0"
-          title="Opções da tarefa"
-        >
-          <MoreHorizontal size={14} />
-        </button>
+        <TaskActionsMenu task={task} onOpen={() => onSelectTask(task)} onToggleComplete={event => onToggleComplete(task.id, event)} />
       </div>
+    </div>
+    {expanded && onUpdateTask && <ExpandableTaskChildren task={task} users={task.availableAssignees || []} onUpdateTask={onUpdateTask} />}
     </div>
   );
 };

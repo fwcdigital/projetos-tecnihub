@@ -6,15 +6,7 @@ import { listMigrationFiles } from './database/migration-files.js';
 export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'PROJECT_MANAGER' | 'COLLABORATOR';
 export type UserStatus = 'ACTIVE' | 'INACTIVE';
 export type ClientStatus = 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
-export type ProjectStatus =
-  | 'PLANNING'
-  | 'WAITING_TO_START'
-  | 'IN_PROGRESS'
-  | 'WAITING_CLIENT'
-  | 'IN_REVIEW'
-  | 'PAUSED'
-  | 'COMPLETED'
-  | 'CANCELLED';
+export type ProjectStatus = string;
 export type ProjectType =
   | 'WEBSITE'
   | 'LANDING_PAGE'
@@ -86,21 +78,67 @@ export interface DbProjectMember {
   created_at: string;
 }
 
+export interface DbProjectStatus {
+  id: string;
+  name: string;
+  color: string;
+  position: number;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DbTask {
   id: string;
   project_id: string;
+  parent_task_id?: string | null;
+  generated_by_rule_id?: string | null;
   title: string;
   description: string;
   responsible_user_id: string;
   status: TaskStatus;
   priority: TaskPriority;
   start_date?: string | null;
+  start_time?: string | null;
   due_date: string;
   due_time?: string | null;
   completed_at?: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface DbChecklistItem {
+  id: string;
+  task_id: string;
+  title: string;
+  is_completed: boolean;
+  position: number;
+  due_date?: string | null;
+  due_time?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbTaskComment {
+  id: string;
+  task_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+}
+
+export interface DbProjectResource {
+  id: string;
+  project_id: string;
+  kind: 'FILE' | 'GOOGLE_DRIVE';
+  name: string;
+  url?: string | null;
+  storage_path?: string | null;
+  mime_type?: string | null;
+  size_bytes?: number | null;
+  created_by: string;
+  created_at: string;
 }
 
 export interface AuthScope {
@@ -183,6 +221,12 @@ async function enrichProjects(rows: any[]): Promise<any[]> {
      ORDER BY CASE pm.member_role WHEN 'MANAGER' THEN 0 ELSE 1 END, u.name`,
     [projectIds]
   );
+  const resourcesResult = await getPool().query(
+    `SELECT * FROM project_resources
+     WHERE project_id = ANY($1::uuid[])
+     ORDER BY created_at DESC`,
+    [projectIds]
+  );
 
   const membersByProject = new Map<string, any[]>();
   for (const member of membersResult.rows) {
@@ -197,15 +241,39 @@ async function enrichProjects(rows: any[]): Promise<any[]> {
     membersByProject.set(member.project_id, members);
   }
 
+  const resourcesByProject = new Map<string, any[]>();
+  for (const resource of resourcesResult.rows) {
+    const resources = resourcesByProject.get(resource.project_id) || [];
+    resources.push({
+      id: resource.id,
+      projectId: resource.project_id,
+      kind: resource.kind,
+      name: resource.name,
+      url: resource.url || undefined,
+      mimeType: resource.mime_type || undefined,
+      sizeBytes: resource.size_bytes == null ? undefined : Number(resource.size_bytes),
+      createdAt: toIsoString(resource.created_at)
+    });
+    resourcesByProject.set(resource.project_id, resources);
+  }
+
   return rows.map(row => {
-    const { client_name, client_company, manager_name, manager_avatar, ...projectRow } = row;
+    const {
+      client_name, client_company, manager_name, manager_avatar,
+      project_status_name, project_status_color, project_status_active,
+      ...projectRow
+    } = row;
     return {
       ...normalizeProject(projectRow),
       clientName: client_name || 'Cliente Desconhecido',
       clientCompany: client_company || '',
       managerName: manager_name || 'Gestor Não Atribuído',
       managerAvatar: manager_avatar || '',
-      teamMembers: membersByProject.get(row.id) || []
+      projectStatusName: project_status_name || row.status,
+      projectStatusColor: project_status_color || '#A1A1AA',
+      projectStatusActive: project_status_active !== false,
+      teamMembers: membersByProject.get(row.id) || [],
+      resources: resourcesByProject.get(row.id) || []
     };
   });
 }
@@ -418,6 +486,80 @@ export const clientRepository = {
   archive: async (id: string): Promise<DbClient | null> => clientRepository.update(id, { status: 'ARCHIVED' })
 };
 
+function normalizeProjectStatus(row: any): DbProjectStatus {
+  return {
+    ...row,
+    position: Number(row.position),
+    active: Boolean(row.active),
+    created_at: toIsoString(row.created_at),
+    updated_at: toIsoString(row.updated_at)
+  } as DbProjectStatus;
+}
+
+export const projectStatusRepository = {
+  findAll: async (includeInactive = false): Promise<Array<DbProjectStatus & { projectsCount: number }>> => {
+    const result = await getPool().query(
+      `SELECT project_status.*, COUNT(project.id)::integer AS projects_count
+       FROM project_statuses project_status
+       LEFT JOIN projects project ON project.status = project_status.id
+       ${includeInactive ? '' : 'WHERE project_status.active = TRUE'}
+       GROUP BY project_status.id
+       ORDER BY project_status.position, project_status.name`
+    );
+    return result.rows.map(row => ({ ...normalizeProjectStatus(row), projectsCount: Number(row.projects_count) }));
+  },
+
+  findById: async (id: string): Promise<(DbProjectStatus & { projectsCount: number }) | null> => {
+    const result = await getPool().query(
+      `SELECT project_status.*, COUNT(project.id)::integer AS projects_count
+       FROM project_statuses project_status
+       LEFT JOIN projects project ON project.status = project_status.id
+       WHERE project_status.id = $1
+       GROUP BY project_status.id`,
+      [id]
+    );
+    if (!result.rowCount) return null;
+    return { ...normalizeProjectStatus(result.rows[0]), projectsCount: Number(result.rows[0].projects_count) };
+  },
+
+  create: async (data: Pick<DbProjectStatus, 'id' | 'name' | 'color'> & Partial<Pick<DbProjectStatus, 'active'>>): Promise<DbProjectStatus> => {
+    const result = await getPool().query(
+      `INSERT INTO project_statuses (id, name, color, position, active)
+       VALUES ($1, $2, $3, COALESCE((SELECT MAX(position) + 1 FROM project_statuses), 0), $4)
+       RETURNING *`,
+      [data.id, data.name, data.color, data.active ?? true]
+    );
+    return normalizeProjectStatus(result.rows[0]);
+  },
+
+  update: async (id: string, updates: Partial<Pick<DbProjectStatus, 'name' | 'color' | 'active' | 'position'>>): Promise<DbProjectStatus | null> => {
+    const columnMap: Record<string, string> = { name: 'name', color: 'color', active: 'active', position: 'position' };
+    const entries = Object.entries(updates).filter(([key, value]) => key in columnMap && value !== undefined);
+    if (!entries.length) return (await projectStatusRepository.findById(id)) as DbProjectStatus | null;
+    const values = entries.map(([, value]) => value);
+    const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
+    values.push(id);
+    const result = await getPool().query(
+      `UPDATE project_statuses SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING *`,
+      values
+    );
+    return result.rowCount ? normalizeProjectStatus(result.rows[0]) : null;
+  },
+
+  reorder: async (ids: string[]): Promise<void> => {
+    await withTransaction(async client => {
+      for (const [position, id] of ids.entries()) {
+        await client.query('UPDATE project_statuses SET position = $1 WHERE id = $2', [position, id]);
+      }
+    });
+  },
+
+  delete: async (id: string): Promise<boolean> => {
+    const result = await getPool().query('DELETE FROM project_statuses WHERE id = $1', [id]);
+    return Boolean(result.rowCount);
+  }
+};
+
 export const projectRepository = {
   findAll: async (
     user?: AuthScope,
@@ -446,10 +588,13 @@ export const projectRepository = {
 
     const result = await getPool().query(
       `SELECT p.*, c.name AS client_name, c.company_name AS client_company,
-              manager.name AS manager_name, manager.avatar AS manager_avatar
+              manager.name AS manager_name, manager.avatar AS manager_avatar,
+              project_status.name AS project_status_name, project_status.color AS project_status_color,
+              project_status.active AS project_status_active
        FROM projects p
        INNER JOIN clients c ON c.id = p.client_id
        INNER JOIN users manager ON manager.id = p.manager_id
+       INNER JOIN project_statuses project_status ON project_status.id = p.status
        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
        ORDER BY p.created_at DESC`,
       values
@@ -463,10 +608,13 @@ export const projectRepository = {
     addRestrictedProjectAccess(where, values, user);
     const result = await getPool().query(
       `SELECT p.*, c.name AS client_name, c.company_name AS client_company,
-              manager.name AS manager_name, manager.avatar AS manager_avatar
+              manager.name AS manager_name, manager.avatar AS manager_avatar,
+              project_status.name AS project_status_name, project_status.color AS project_status_color,
+              project_status.active AS project_status_active
        FROM projects p
        INNER JOIN clients c ON c.id = p.client_id
        INNER JOIN users manager ON manager.id = p.manager_id
+       INNER JOIN project_statuses project_status ON project_status.id = p.status
        WHERE ${where.join(' AND ')}`,
       values
     );
@@ -544,6 +692,20 @@ export const projectRepository = {
 };
 
 function normalizeTask(row: any): any {
+  const assignees = Array.isArray(row.assignees) && row.assignees.length > 0
+    ? row.assignees.map((assignee: any) => ({
+        id: assignee.id,
+        name: assignee.name,
+        avatar: assignee.avatar || '',
+        position: assignee.jobTitle || assignee.job_title || 'Especialista'
+      }))
+    : [{
+        id: row.responsible_user_id,
+        name: row.responsible_name || 'Não atribuído',
+        avatar: row.responsible_avatar || '',
+        position: row.responsible_job_title || 'Especialista'
+      }];
+
   return {
     id: row.id,
     title: row.title,
@@ -551,18 +713,37 @@ function normalizeTask(row: any): any {
     clientId: row.client_id,
     clientName: row.client_name || 'Cliente',
     projectId: row.project_id,
+    parentTaskId: row.parent_task_id || undefined,
+    generatedByRuleId: row.generated_by_rule_id || undefined,
     projectName: row.project_name || 'Projeto',
     assigneeId: row.responsible_user_id,
     assigneeName: row.responsible_name || 'Não atribuído',
     assigneeAvatar: row.responsible_avatar || '',
-    participantIds: [row.responsible_user_id],
+    participantIds: assignees.map((assignee: any) => assignee.id),
+    assignees,
+    availableAssignees: Array.isArray(row.available_assignees) ? row.available_assignees.map((assignee: any) => ({
+      id: assignee.id,
+      name: assignee.name,
+      avatar: assignee.avatar || '',
+      position: assignee.jobTitle || 'Especialista'
+    })) : [],
     priority: row.priority,
     status: row.status,
     startDate: row.start_date ? toDateString(row.start_date) : undefined,
+    startTime: row.start_time ? String(row.start_time).slice(0, 5) : undefined,
     dueDate: toDateString(row.due_date),
     dueTime: row.due_time ? String(row.due_time).slice(0, 5) : undefined,
     completedAt: row.completed_at ? toIsoString(row.completed_at) : undefined,
-    isRecurring: false,
+    isRecurring: Boolean(row.recurrence_id),
+    recurrence: row.recurrence_id ? {
+      id: row.recurrence_id,
+      frequency: row.recurrence_frequency,
+      ruleText: row.recurrence_rule_text,
+      customIntervalDays: row.recurrence_custom_interval_days || undefined,
+      nextOccurrenceDate: row.recurrence_next_date ? toDateString(row.recurrence_next_date) : undefined,
+      occurrenceTime: row.recurrence_time ? String(row.recurrence_time).slice(0, 5) : undefined,
+      status: row.recurrence_status
+    } : undefined,
     subtasks: [],
     checklist: [],
     comments: [],
@@ -577,12 +758,108 @@ function normalizeTask(row: any): any {
 function taskSelect(): string {
   return `SELECT t.*, p.client_id, p.name AS project_name, c.name AS client_name,
                  responsible.name AS responsible_name, responsible.avatar AS responsible_avatar,
-                 creator.name AS created_by_name
+                 responsible.job_title AS responsible_job_title, creator.name AS created_by_name,
+                 recurrence.id AS recurrence_id, recurrence.frequency AS recurrence_frequency,
+                 recurrence.rule_text AS recurrence_rule_text, recurrence.next_occurrence_date AS recurrence_next_date,
+                 recurrence.custom_interval_days AS recurrence_custom_interval_days,
+                 recurrence.occurrence_time AS recurrence_time, recurrence.status AS recurrence_status,
+                 COALESCE((
+                   SELECT json_agg(json_build_object(
+                     'id', assigned.id,
+                     'name', assigned.name,
+                     'avatar', assigned.avatar,
+                     'jobTitle', assigned.job_title
+                   ) ORDER BY ta.created_at, assigned.name)
+                   FROM task_assignees ta
+                   INNER JOIN users assigned ON assigned.id = ta.user_id
+                   WHERE ta.task_id = t.id
+                 ), '[]'::json) AS assignees,
+                 COALESCE((
+                   SELECT json_agg(json_build_object(
+                     'id', member_user.id,
+                     'name', member_user.name,
+                     'avatar', member_user.avatar,
+                     'jobTitle', member_user.job_title
+                   ) ORDER BY CASE member.member_role WHEN 'MANAGER' THEN 0 ELSE 1 END, member_user.name)
+                   FROM project_members member
+                   INNER JOIN users member_user ON member_user.id = member.user_id AND member_user.status = 'ACTIVE'
+                   WHERE member.project_id = t.project_id
+                 ), '[]'::json) AS available_assignees
           FROM tasks t
           INNER JOIN projects p ON p.id = t.project_id
           INNER JOIN clients c ON c.id = p.client_id
           INNER JOIN users responsible ON responsible.id = t.responsible_user_id
-          INNER JOIN users creator ON creator.id = t.created_by`;
+          INNER JOIN users creator ON creator.id = t.created_by
+          LEFT JOIN recurrence_rules recurrence ON recurrence.source_task_id = t.id AND recurrence.status <> 'ENDED'`;
+}
+
+function normalizeChecklistItem(row: any): any {
+  return {
+    id: row.id,
+    title: row.title,
+    completed: Boolean(row.is_completed),
+    position: Number(row.position),
+    dueDate: row.due_date ? toDateString(row.due_date) : undefined,
+    dueTime: row.due_time ? String(row.due_time).slice(0, 5) : undefined,
+    assigneeId: row.responsible_user_id || undefined
+  };
+}
+
+async function enrichTasks(rows: any[]): Promise<any[]> {
+  if (rows.length === 0) return [];
+  const tasks = rows.map(normalizeTask);
+  const taskIds = tasks.map(task => task.id);
+  const subtaskResult = await getPool().query(
+    `${taskSelect()} WHERE t.parent_task_id = ANY($1::uuid[]) ORDER BY t.created_at`,
+    [taskIds]
+  );
+  const subtasks = subtaskResult.rows.map(normalizeTask);
+  const allTaskIds = [...taskIds, ...subtasks.map(task => task.id)];
+  const checklistResult = await getPool().query(
+    `SELECT * FROM checklist_items WHERE task_id = ANY($1::uuid[]) ORDER BY position, created_at`,
+    [allTaskIds]
+  );
+  const commentsResult = await getPool().query(
+    `SELECT comment.*, author.name AS user_name, author.avatar AS user_avatar
+     FROM task_comments comment
+     INNER JOIN users author ON author.id = comment.user_id
+     WHERE comment.task_id = ANY($1::uuid[])
+     ORDER BY comment.created_at DESC`,
+    [allTaskIds]
+  );
+  const checklistByTask = new Map<string, any[]>();
+  for (const row of checklistResult.rows) {
+    const items = checklistByTask.get(row.task_id) || [];
+    items.push(normalizeChecklistItem(row));
+    checklistByTask.set(row.task_id, items);
+  }
+  const commentsByTask = new Map<string, any[]>();
+  for (const row of commentsResult.rows) {
+    const comments = commentsByTask.get(row.task_id) || [];
+    comments.push({
+      id: row.id,
+      userId: row.user_id,
+      userName: row.user_name,
+      userAvatar: row.user_avatar || '',
+      content: row.content,
+      createdAt: toIsoString(row.created_at)
+    });
+    commentsByTask.set(row.task_id, comments);
+  }
+  const subtasksByParent = new Map<string, any[]>();
+  for (const subtask of subtasks) {
+    subtask.checklist = checklistByTask.get(subtask.id) || [];
+    subtask.comments = commentsByTask.get(subtask.id) || [];
+    const siblings = subtasksByParent.get(subtask.parentTaskId) || [];
+    siblings.push(subtask);
+    subtasksByParent.set(subtask.parentTaskId, siblings);
+  }
+  return tasks.map(task => ({
+    ...task,
+    checklist: checklistByTask.get(task.id) || [],
+    comments: commentsByTask.get(task.id) || [],
+    subtasks: subtasksByParent.get(task.id) || []
+  }));
 }
 
 export const taskRepository = {
@@ -593,6 +870,7 @@ export const taskRepository = {
     const where: string[] = [];
     const values: unknown[] = [];
     addRestrictedProjectAccess(where, values, user, 'p');
+    where.push('t.parent_task_id IS NULL');
     if (filter.projectId) { values.push(filter.projectId); where.push(`t.project_id = $${values.length}`); }
     if (filter.clientId) { values.push(filter.clientId); where.push(`p.client_id = $${values.length}`); }
     if (filter.status) {
@@ -601,7 +879,10 @@ export const taskRepository = {
     } else if (!filter.includeCompleted) {
       where.push(`t.status <> 'CONCLUIDO'`);
     }
-    if (filter.assigneeId) { values.push(filter.assigneeId); where.push(`t.responsible_user_id = $${values.length}`); }
+    if (filter.assigneeId) {
+      values.push(filter.assigneeId);
+      where.push(`EXISTS (SELECT 1 FROM task_assignees filter_assignee WHERE filter_assignee.task_id = t.id AND filter_assignee.user_id = $${values.length})`);
+    }
     if (filter.search) {
       values.push(`%${filter.search}%`);
       where.push(`(t.title ILIKE $${values.length} OR t.description ILIKE $${values.length})`);
@@ -610,7 +891,7 @@ export const taskRepository = {
       `${taskSelect()} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY t.created_at DESC`,
       values
     );
-    return result.rows.map(normalizeTask);
+    return enrichTasks(result.rows);
   },
 
   findById: async (id: string, user?: AuthScope): Promise<any | null> => {
@@ -618,38 +899,50 @@ export const taskRepository = {
     const values: unknown[] = [id];
     addRestrictedProjectAccess(where, values, user, 'p');
     const result = await getPool().query(`${taskSelect()} WHERE ${where.join(' AND ')}`, values);
-    return result.rowCount ? normalizeTask(result.rows[0]) : null;
+    if (!result.rowCount) return null;
+    return (await enrichTasks(result.rows))[0];
   },
 
-  create: async (data: Omit<DbTask, 'id' | 'created_at' | 'updated_at'>): Promise<any> => {
-    const result = await getPool().query<{ id: string }>(
-      `INSERT INTO tasks (
-        project_id, title, description, responsible_user_id, status, priority,
-        start_date, due_date, due_time, completed_at, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      RETURNING id`,
-      [data.project_id, data.title, data.description, data.responsible_user_id, data.status,
-       data.priority, data.start_date || null, data.due_date, data.due_time || null,
-       data.completed_at || null, data.created_by]
-    );
-    return taskRepository.findById(result.rows[0].id);
+  create: async (data: Omit<DbTask, 'id' | 'created_at' | 'updated_at'> & { assignee_ids?: string[] }): Promise<any> => {
+    const taskId = await withTransaction(async client => {
+      const result = await client.query<{ id: string }>(
+        `INSERT INTO tasks (
+          project_id, parent_task_id, generated_by_rule_id, title, description, responsible_user_id, status, priority,
+          start_date, start_time, due_date, due_time, completed_at, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        RETURNING id`,
+        [data.project_id, data.parent_task_id || null, data.generated_by_rule_id || null, data.title, data.description, data.responsible_user_id, data.status,
+         data.priority, data.start_date || null, data.start_time || null, data.due_date, data.due_time || null,
+         data.completed_at || null, data.created_by]
+      );
+      const id = result.rows[0].id;
+      await replaceTaskAssignees(client, id, data.assignee_ids || [data.responsible_user_id]);
+      return id;
+    });
+    return taskRepository.findById(taskId);
   },
 
-  update: async (id: string, updates: Partial<Omit<DbTask, 'id' | 'created_at' | 'updated_at'>>): Promise<any | null> => {
+  update: async (id: string, updates: Partial<Omit<DbTask, 'id' | 'created_at' | 'updated_at'>> & { assignee_ids?: string[] }): Promise<any | null> => {
     const columnMap: Record<string, string> = {
-      project_id: 'project_id', title: 'title', description: 'description',
+      project_id: 'project_id', parent_task_id: 'parent_task_id', generated_by_rule_id: 'generated_by_rule_id', title: 'title', description: 'description',
       responsible_user_id: 'responsible_user_id', status: 'status', priority: 'priority',
-      start_date: 'start_date', due_date: 'due_date', due_time: 'due_time', completed_at: 'completed_at'
+      start_date: 'start_date', start_time: 'start_time', due_date: 'due_date', due_time: 'due_time', completed_at: 'completed_at'
     };
     const entries = Object.entries(updates).filter(([key, value]) => key in columnMap && value !== undefined);
-    if (!entries.length) return taskRepository.findById(id);
-    const values = entries.map(([, value]) => value);
-    const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
-    values.push(id);
-    const result = await getPool().query(
-      `UPDATE tasks SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING id`, values
-    );
-    return result.rowCount ? taskRepository.findById(id) : null;
+    const updated = await withTransaction(async client => {
+      if (entries.length) {
+        const values = entries.map(([, value]) => value);
+        const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
+        values.push(id);
+        const result = await client.query(
+          `UPDATE tasks SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING id`, values
+        );
+        if (!result.rowCount) return false;
+      }
+      if (updates.assignee_ids) await replaceTaskAssignees(client, id, updates.assignee_ids);
+      return true;
+    });
+    return updated ? taskRepository.findById(id) : null;
   },
 
   delete: async (id: string): Promise<boolean> => {
@@ -657,6 +950,270 @@ export const taskRepository = {
     return Boolean(result.rowCount);
   }
 };
+
+export const taskCommentRepository = {
+  create: async (taskId: string, userId: string, content: string): Promise<DbTaskComment> => {
+    const result = await getPool().query(
+      `INSERT INTO task_comments (task_id, user_id, content)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [taskId, userId, content]
+    );
+    return { ...result.rows[0], created_at: toIsoString(result.rows[0].created_at) } as DbTaskComment;
+  }
+};
+
+export const checklistRepository = {
+  create: async (taskId: string, data: { title: string; due_date?: string | null; due_time?: string | null; responsible_user_id?: string | null }): Promise<any> => {
+    const positionResult = await getPool().query<{ next_position: number }>(
+      'SELECT COALESCE(MAX(position), -1) + 1 AS next_position FROM checklist_items WHERE task_id = $1',
+      [taskId]
+    );
+    const result = await getPool().query(
+      `INSERT INTO checklist_items (task_id, title, due_date, due_time, responsible_user_id, position)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [taskId, data.title, data.due_date || null, data.due_time || null, data.responsible_user_id || null, positionResult.rows[0].next_position]
+    );
+    return normalizeChecklistItem(result.rows[0]);
+  },
+
+  update: async (id: string, updates: { title?: string; is_completed?: boolean; due_date?: string | null; due_time?: string | null; responsible_user_id?: string | null; position?: number }): Promise<any | null> => {
+    const columnMap: Record<string, string> = {
+      title: 'title', is_completed: 'is_completed', due_date: 'due_date', due_time: 'due_time', responsible_user_id: 'responsible_user_id', position: 'position'
+    };
+    const entries = Object.entries(updates).filter(([key, value]) => key in columnMap && value !== undefined);
+    if (!entries.length) return null;
+    const values = entries.map(([, value]) => value);
+    const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
+    values.push(id);
+    const result = await getPool().query(
+      `UPDATE checklist_items SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING *`, values
+    );
+    return result.rowCount ? normalizeChecklistItem(result.rows[0]) : null;
+  },
+
+  delete: async (id: string): Promise<boolean> => {
+    const result = await getPool().query('DELETE FROM checklist_items WHERE id = $1', [id]);
+    return Boolean(result.rowCount);
+  },
+
+  findTaskId: async (id: string): Promise<string | null> => {
+    const result = await getPool().query<{ task_id: string }>('SELECT task_id FROM checklist_items WHERE id = $1', [id]);
+    return result.rowCount ? result.rows[0].task_id : null;
+  }
+};
+
+export const projectResourceRepository = {
+  findAll: async (projectId: string): Promise<any[]> => {
+    const result = await getPool().query(
+      'SELECT * FROM project_resources WHERE project_id = $1 ORDER BY created_at DESC',
+      [projectId]
+    );
+    return result.rows.map(row => ({
+      id: row.id,
+      projectId: row.project_id,
+      kind: row.kind,
+      name: row.name,
+      url: row.url || undefined,
+      storagePath: row.storage_path || undefined,
+      mimeType: row.mime_type || undefined,
+      sizeBytes: row.size_bytes == null ? undefined : Number(row.size_bytes),
+      createdAt: toIsoString(row.created_at)
+    }));
+  },
+
+  findById: async (id: string): Promise<any | null> => {
+    const result = await getPool().query('SELECT * FROM project_resources WHERE id = $1', [id]);
+    return result.rowCount ? result.rows[0] : null;
+  },
+
+  create: async (data: Omit<DbProjectResource, 'id' | 'created_at'>): Promise<any> => {
+    const result = await getPool().query<{ id: string }>(
+      `INSERT INTO project_resources (project_id, kind, name, url, storage_path, mime_type, size_bytes, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [data.project_id, data.kind, data.name, data.url || null, data.storage_path || null,
+       data.mime_type || null, data.size_bytes || null, data.created_by]
+    );
+    return (await projectResourceRepository.findAll(data.project_id)).find(resource => resource.id === result.rows[0].id);
+  },
+
+  delete: async (id: string): Promise<boolean> => {
+    const result = await getPool().query('DELETE FROM project_resources WHERE id = $1', [id]);
+    return Boolean(result.rowCount);
+  }
+};
+
+function normalizeRoutine(row: any): any {
+  const assignees = Array.isArray(row.assignees) ? row.assignees : [];
+  return {
+    id: row.id,
+    sourceTaskId: row.source_task_id,
+    title: row.title,
+    projectId: row.project_id,
+    projectName: row.project_name,
+    clientId: row.client_id,
+    clientName: row.client_name,
+    frequency: row.frequency,
+    ruleText: row.rule_text,
+    customIntervalDays: row.custom_interval_days || undefined,
+    nextOccurrenceDate: toDateString(row.next_occurrence_date),
+    occurrenceTime: row.occurrence_time ? String(row.occurrence_time).slice(0, 5) : undefined,
+    status: row.rule_status,
+    assignees: assignees.map((assignee: any) => ({
+      id: assignee.id, name: assignee.name, avatar: assignee.avatar || '', position: assignee.jobTitle || 'Especialista'
+    })),
+    priority: row.priority,
+    description: row.description || '',
+    createdById: row.created_by,
+    createdAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at)
+  };
+}
+
+function routineSelect(): string {
+  return `SELECT r.*, r.status AS rule_status, source.title, source.description, source.priority,
+                 source.project_id, source.created_by, p.client_id, p.name AS project_name, c.name AS client_name,
+                 COALESCE((
+                   SELECT json_agg(json_build_object('id', u.id, 'name', u.name, 'avatar', u.avatar, 'jobTitle', u.job_title) ORDER BY ta.created_at)
+                   FROM task_assignees ta INNER JOIN users u ON u.id = ta.user_id
+                   WHERE ta.task_id = source.id
+                 ), '[]'::json) AS assignees
+          FROM recurrence_rules r
+          INNER JOIN tasks source ON source.id = r.source_task_id
+          INNER JOIN projects p ON p.id = source.project_id
+          INNER JOIN clients c ON c.id = p.client_id`;
+}
+
+function advanceRoutineDate(dateValue: string, frequency: string, customIntervalDays?: number): string {
+  const date = new Date(`${dateValue}T12:00:00Z`);
+  if (frequency === 'DIARIO') date.setUTCDate(date.getUTCDate() + 1);
+  else if (frequency === 'SEMANAL') date.setUTCDate(date.getUTCDate() + 7);
+  else if (frequency === 'QUINZENAL') date.setUTCDate(date.getUTCDate() + 15);
+  else if (frequency === 'MENSAL') date.setUTCMonth(date.getUTCMonth() + 1);
+  else date.setUTCDate(date.getUTCDate() + (customIntervalDays || 7));
+  return date.toISOString().slice(0, 10);
+}
+
+export const routineRepository = {
+  findAll: async (user?: AuthScope): Promise<any[]> => {
+    const where: string[] = [];
+    const values: unknown[] = [];
+    addRestrictedProjectAccess(where, values, user, 'p');
+    const result = await getPool().query(
+      `${routineSelect()} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY r.created_at DESC`,
+      values
+    );
+    return result.rows.map(normalizeRoutine);
+  },
+
+  findById: async (id: string, user?: AuthScope): Promise<any | null> => {
+    const where = ['r.id = $1'];
+    const values: unknown[] = [id];
+    addRestrictedProjectAccess(where, values, user, 'p');
+    const result = await getPool().query(`${routineSelect()} WHERE ${where.join(' AND ')}`, values);
+    return result.rowCount ? normalizeRoutine(result.rows[0]) : null;
+  },
+
+  findBySourceTask: async (taskId: string): Promise<any | null> => {
+    const result = await getPool().query(`${routineSelect()} WHERE r.source_task_id = $1`, [taskId]);
+    return result.rowCount ? normalizeRoutine(result.rows[0]) : null;
+  },
+
+  upsert: async (data: {
+    source_task_id: string; frequency: string; rule_text: string; custom_interval_days?: number | null;
+    next_occurrence_date: string; occurrence_time?: string | null; created_by: string;
+  }): Promise<any> => {
+    const result = await getPool().query<{ id: string }>(
+      `INSERT INTO recurrence_rules (
+        source_task_id, frequency, rule_text, custom_interval_days, next_occurrence_date, occurrence_time, created_by
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (source_task_id) DO UPDATE SET
+         frequency = EXCLUDED.frequency,
+         rule_text = EXCLUDED.rule_text,
+         custom_interval_days = EXCLUDED.custom_interval_days,
+         next_occurrence_date = EXCLUDED.next_occurrence_date,
+         occurrence_time = EXCLUDED.occurrence_time,
+         status = 'ACTIVE'
+       RETURNING id`,
+      [data.source_task_id, data.frequency, data.rule_text, data.custom_interval_days || null,
+       data.next_occurrence_date, data.occurrence_time || null, data.created_by]
+    );
+    return routineRepository.findById(result.rows[0].id);
+  },
+
+  update: async (id: string, updates: Record<string, unknown>): Promise<any | null> => {
+    const columnMap: Record<string, string> = {
+      frequency: 'frequency', rule_text: 'rule_text', custom_interval_days: 'custom_interval_days',
+      next_occurrence_date: 'next_occurrence_date', occurrence_time: 'occurrence_time', status: 'status'
+    };
+    const entries = Object.entries(updates).filter(([key, value]) => key in columnMap && value !== undefined);
+    if (!entries.length) return routineRepository.findById(id);
+    const values = entries.map(([, value]) => value);
+    const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
+    values.push(id);
+    const result = await getPool().query(
+      `UPDATE recurrence_rules SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING id`, values
+    );
+    return result.rowCount ? routineRepository.findById(id) : null;
+  },
+
+  delete: async (id: string): Promise<boolean> => {
+    const result = await getPool().query('DELETE FROM recurrence_rules WHERE id = $1', [id]);
+    return Boolean(result.rowCount);
+  },
+
+  deleteBySourceTask: async (taskId: string): Promise<boolean> => {
+    const result = await getPool().query('DELETE FROM recurrence_rules WHERE source_task_id = $1', [taskId]);
+    return Boolean(result.rowCount);
+  },
+
+  materializeDueOccurrences: async (user?: AuthScope): Promise<void> => {
+    const today = new Date().toISOString().slice(0, 10);
+    const routines = (await routineRepository.findAll(user)).filter(routine => routine.status === 'ACTIVE');
+    for (const routine of routines) {
+      let nextDate = routine.nextOccurrenceDate;
+      let guard = 0;
+      while (nextDate <= today && guard < 60) {
+        guard += 1;
+        try {
+          await taskRepository.create({
+            project_id: routine.projectId,
+            parent_task_id: null,
+            generated_by_rule_id: routine.id,
+            title: `${routine.title} — ${nextDate.split('-').reverse().slice(0, 2).join('/')}`,
+            description: routine.description,
+            responsible_user_id: routine.assignees[0].id,
+            assignee_ids: routine.assignees.map((assignee: any) => assignee.id),
+            status: 'A_FAZER',
+            priority: routine.priority,
+            start_date: nextDate,
+            start_time: routine.occurrenceTime || null,
+            due_date: nextDate,
+            due_time: routine.occurrenceTime || null,
+            completed_at: null,
+            created_by: routine.createdById
+          });
+        } catch (error: any) {
+          if (!String(error?.message || '').toLowerCase().includes('unique')) throw error;
+        }
+        nextDate = advanceRoutineDate(nextDate, routine.frequency, routine.customIntervalDays);
+      }
+      if (nextDate !== routine.nextOccurrenceDate) {
+        await routineRepository.update(routine.id, { next_occurrence_date: nextDate });
+      }
+    }
+  },
+
+  nextDate: advanceRoutineDate
+};
+
+async function replaceTaskAssignees(client: PoolClient, taskId: string, userIds: string[]): Promise<void> {
+  const uniqueUserIds = Array.from(new Set(userIds));
+  await client.query('DELETE FROM task_assignees WHERE task_id = $1', [taskId]);
+  for (const userId of uniqueUserIds) {
+    await client.query('INSERT INTO task_assignees (task_id, user_id) VALUES ($1, $2)', [taskId, userId]);
+  }
+}
 
 async function replaceProjectMembers(
   client: PoolClient,

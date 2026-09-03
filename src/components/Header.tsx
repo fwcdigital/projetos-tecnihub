@@ -56,7 +56,7 @@ export const Header: React.FC<HeaderProps> = ({
       case 'DASHBOARD':
         return 'Dashboard';
       case 'MEU_TRABALHO':
-        return 'Meu Trabalho';
+        return 'Tarefas';
       case 'PROJETOS':
         return 'Projetos';
       case 'PROJETO_DETALHE':
@@ -70,7 +70,7 @@ export const Header: React.FC<HeaderProps> = ({
       case 'MEMBRO_DETALHE':
         return subTitle || 'Agenda do Colaborador';
       case 'RECORRENCIAS':
-        return 'Recorrências';
+        return 'Rotinas';
       case 'CALENDARIO':
         return 'Calendário';
       case 'RELATORIOS':
