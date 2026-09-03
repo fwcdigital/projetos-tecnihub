@@ -3,16 +3,21 @@ import { Task } from '../types';
 import { Calendar, ChevronLeft, ChevronRight, Clock, Building2, Plus, ListFilter, LayoutGrid, AlertCircle, Check } from 'lucide-react';
 import { PriorityBadge } from '../components/PriorityBadge';
 import { StatusBadge } from '../components/StatusBadge';
+import { CompletedTasksSection } from '../components/CompletedTasksSection';
 
 interface CalendarViewProps {
   tasks: Task[];
+  completedTasks: Task[];
   onSelectTask: (task: Task) => void;
+  onToggleComplete: (taskId: string, event: React.MouseEvent) => void;
   onOpenNewTask: () => void;
 }
 
 export const CalendarView: React.FC<CalendarViewProps> = ({
   tasks,
+  completedTasks,
   onSelectTask,
+  onToggleComplete,
   onOpenNewTask
 }) => {
   const [currentMonth, setCurrentMonth] = useState('Setembro de 2026');
@@ -251,6 +256,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           </div>
         </div>
       )}
+      <CompletedTasksSection
+        tasks={completedTasks.filter(task => task.dueDate.startsWith('2026-09-'))}
+        onSelectTask={onSelectTask}
+        onToggleComplete={onToggleComplete}
+        contextKey={currentMonth}
+      />
     </div>
   );
 };

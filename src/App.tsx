@@ -81,11 +81,12 @@ function MainLayout() {
     if (!isAuthenticated) return;
     try {
       setIsLoadingData(true);
-      const [fetchedClients, fetchedProjects, fetchedUsers, fetchedTasks] = await Promise.all([
+      const [fetchedClients, fetchedProjects, fetchedUsers, activeTasks, completedTasks] = await Promise.all([
         clientService.getAll(),
         projectService.getAll(),
         userService.getAll(),
-        taskService.getAll()
+        taskService.getAll(),
+        taskService.getAll({ status: 'CONCLUIDO' })
       ]);
 
       setClients(fetchedClients);
@@ -93,7 +94,7 @@ function MainLayout() {
       setProjects(fetchedProjects);
       setSelectedProject(fetchedProjects[0] || null);
       setUsers(fetchedUsers);
-      setTasks(fetchedTasks);
+      setTasks([...activeTasks, ...completedTasks]);
     } catch (err) {
       console.error('Erro ao carregar dados do servidor:', err);
     } finally {
@@ -125,7 +126,7 @@ function MainLayout() {
 
   // Handler: Update Task in backend & state
   const handleUpdateTask = async (updatedTask: Task) => {
-    // Atualização otimista imediata
+    const previousTask = tasks.find(task => task.id === updatedTask.id);
     setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
     setSelectedTask(updatedTask);
 
@@ -137,6 +138,10 @@ function MainLayout() {
       }
     } catch (err) {
       console.error('Erro ao persistir atualização de tarefa no backend:', err);
+      if (previousTask) {
+        setTasks(prev => prev.map(t => t.id === previousTask.id ? previousTask : t));
+        setSelectedTask(previousTask);
+      }
     }
   };
 
@@ -147,7 +152,11 @@ function MainLayout() {
     if (!currentTask) return;
 
     const nextStatus = currentTask.status === 'CONCLUIDO' ? 'A_FAZER' : 'CONCLUIDO';
-    const updated = { ...currentTask, status: nextStatus };
+    const updated = {
+      ...currentTask,
+      status: nextStatus,
+      completedAt: nextStatus === 'CONCLUIDO' ? new Date().toISOString() : undefined
+    };
 
     setTasks(prev => prev.map(t => t.id === taskId ? updated : t));
     if (selectedTask?.id === taskId) {
@@ -155,9 +164,13 @@ function MainLayout() {
     }
 
     try {
-      await taskService.update(taskId, { status: nextStatus });
+      const persisted = await taskService.update(taskId, { status: nextStatus });
+      setTasks(prev => prev.map(t => t.id === taskId ? persisted : t));
+      if (selectedTask?.id === taskId) setSelectedTask(persisted);
     } catch (err) {
       console.error('Erro ao alternar status da tarefa:', err);
+      setTasks(prev => prev.map(t => t.id === taskId ? currentTask : t));
+      if (selectedTask?.id === taskId) setSelectedTask(currentTask);
     }
   };
 
@@ -285,8 +298,10 @@ function MainLayout() {
 
   // Calculate overdue and today counts for badge alerts
   const todayStr = new Date().toISOString().slice(0, 10);
-  const overdueCount = tasks.filter(t => t.dueDate < todayStr && t.status !== 'CONCLUIDO').length;
-  const todayCount = tasks.filter(t => t.dueDate === todayStr && t.status !== 'CONCLUIDO').length;
+  const activeTasks = tasks.filter(task => task.status !== 'CONCLUIDO');
+  const completedTasks = tasks.filter(task => task.status === 'CONCLUIDO');
+  const overdueCount = activeTasks.filter(t => t.dueDate < todayStr).length;
+  const todayCount = activeTasks.filter(t => t.dueDate === todayStr).length;
   const canCreateProject = currentUser.role !== 'COLABORADOR';
   const canCreateClient = currentUser.role === 'ADMIN_PRINCIPAL' || currentUser.role === 'ADMIN';
 
@@ -336,7 +351,8 @@ function MainLayout() {
           {currentView === 'DASHBOARD' && (
             <DashboardView
               currentUser={currentUser}
-              tasks={tasks}
+              tasks={activeTasks}
+              completedTasks={completedTasks}
               projects={projects}
               clients={clients}
               users={users}
@@ -351,7 +367,8 @@ function MainLayout() {
           {currentView === 'MEU_TRABALHO' && (
             <MyWorkView
               currentUser={currentUser}
-              tasks={tasks}
+              tasks={activeTasks}
+              completedTasks={completedTasks}
               projects={projects}
               clients={clients}
               users={users}
@@ -365,7 +382,7 @@ function MainLayout() {
             <ProjectsView
               projects={projects}
               clients={clients}
-              tasks={tasks}
+              tasks={activeTasks}
               onSelectProject={handleNavigateProjectDetail}
               onOpenNewProject={canCreateProject ? () => setIsNewProjectModalOpen(true) : undefined}
             />
@@ -374,7 +391,8 @@ function MainLayout() {
           {currentView === 'PROJETO_DETALHE' && selectedProject && (
             <ProjectDetailView
               project={selectedProject}
-              tasks={tasks}
+              tasks={activeTasks}
+              completedTasks={completedTasks}
               currentUser={currentUser}
               onBack={() => setCurrentView('PROJETOS')}
               onSelectTask={handleSelectTask}
@@ -389,7 +407,7 @@ function MainLayout() {
             <ClientsView
               clients={clients}
               projects={projects}
-              tasks={tasks}
+              tasks={activeTasks}
               onSelectClient={handleNavigateClientDetail}
               onOpenNewClient={canCreateClient ? () => setIsNewClientModalOpen(true) : undefined}
             />
@@ -399,7 +417,8 @@ function MainLayout() {
             <ClientDetailView
               client={selectedClient}
               projects={projects}
-              tasks={tasks}
+              tasks={activeTasks}
+              completedTasks={completedTasks}
               onBack={() => setCurrentView('CLIENTES')}
               onSelectProject={handleNavigateProjectDetail}
               onSelectTask={handleSelectTask}
@@ -415,7 +434,8 @@ function MainLayout() {
           {currentView === 'EQUIPE' && (
             <TeamView
               users={users}
-              tasks={tasks}
+              tasks={activeTasks}
+              completedTasks={completedTasks}
               currentUser={currentUser}
               onCreateUser={handleCreateUser}
               onUpdateUser={handleUpdateUser}
@@ -426,7 +446,8 @@ function MainLayout() {
 
           {currentView === 'RECORRENCIAS' && (
             <RecurrencesView
-              tasks={tasks}
+              tasks={activeTasks}
+              completedTasks={completedTasks}
               projects={projects}
               clients={clients}
               onSelectTask={handleSelectTask}
@@ -438,8 +459,10 @@ function MainLayout() {
 
           {currentView === 'CALENDARIO' && (
             <CalendarView
-              tasks={tasks}
+              tasks={activeTasks}
+              completedTasks={completedTasks}
               onSelectTask={handleSelectTask}
+              onToggleComplete={handleToggleComplete}
               onOpenNewTask={() => setIsNewTaskModalOpen(true)}
             />
           )}
@@ -570,7 +593,7 @@ function MainLayout() {
       <GlobalSearchModal
         isOpen={isSearchModalOpen}
         onClose={() => setIsSearchModalOpen(false)}
-        tasks={tasks}
+        tasks={activeTasks}
         projects={projects}
         clients={clients}
         users={users}

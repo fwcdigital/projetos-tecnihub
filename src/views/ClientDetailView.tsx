@@ -1,6 +1,7 @@
 import React from 'react';
 import { Client, Project, Task, User } from '../types';
 import { TaskRow } from '../components/TaskRow';
+import { CompletedTasksSection } from '../components/CompletedTasksSection';
 import { 
   ArrowLeft, 
   Plus, 
@@ -19,6 +20,7 @@ interface ClientDetailViewProps {
   client: Client;
   projects: Project[];
   tasks: Task[];
+  completedTasks: Task[];
   onBack: () => void;
   onSelectProject: (project: Project) => void;
   onSelectTask: (task: Task) => void;
@@ -31,6 +33,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
   client,
   projects,
   tasks,
+  completedTasks,
   onBack,
   onSelectProject,
   onSelectTask,
@@ -40,7 +43,8 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
 }) => {
   const clientProjects = projects.filter(p => p.clientId === client.id);
   const clientTasks = tasks.filter(t => t.clientId === client.id);
-  const completedTasks = clientTasks.filter(t => t.status === 'CONCLUIDO').length;
+  const clientCompletedTasks = completedTasks.filter(t => t.clientId === client.id);
+  const totalTaskCount = clientTasks.length + clientCompletedTasks.length;
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6 animate-in fade-in duration-150">
@@ -102,7 +106,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
             </div>
             <div className="w-px h-8 bg-zinc-800" />
             <div className="text-center px-2">
-              <span className="block text-lg font-black text-white font-mono">{completedTasks}/{clientTasks.length}</span>
+              <span className="block text-lg font-black text-white font-mono">{clientCompletedTasks.length}/{totalTaskCount}</span>
               <span className="text-[10px] uppercase font-bold text-zinc-500">Demandas</span>
             </div>
           </div>
@@ -190,7 +194,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-zinc-200 flex items-center gap-2">
             <CheckSquare size={16} className="text-emerald-400" />
-            Histórico & Fila de Tarefas ({clientTasks.length})
+            Fila de Tarefas ({clientTasks.length})
           </h2>
         </div>
 
@@ -203,6 +207,12 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
               onToggleComplete={onToggleComplete}
             />
           ))}
+          <CompletedTasksSection
+            tasks={clientCompletedTasks}
+            onSelectTask={onSelectTask}
+            onToggleComplete={onToggleComplete}
+            contextKey={client.id}
+          />
         </div>
       </div>
     </div>

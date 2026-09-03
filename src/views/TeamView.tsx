@@ -2,12 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { Task, User } from '../types';
 import { Plus, Pencil } from 'lucide-react';
 import { TaskRow } from '../components/TaskRow';
+import { CompletedTasksSection } from '../components/CompletedTasksSection';
 import { UserAvatar } from '../components/UserAvatar';
 import { UserManagementModal } from '../components/UserManagementModal';
 
 interface TeamViewProps {
   users: User[];
   tasks: Task[];
+  completedTasks: Task[];
   onSelectTask: (task: Task) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
   currentUser: User;
@@ -18,6 +20,7 @@ interface TeamViewProps {
 export const TeamView: React.FC<TeamViewProps> = ({
   users,
   tasks,
+  completedTasks,
   onSelectTask,
   onToggleComplete,
   currentUser,
@@ -36,6 +39,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
   }, [selectedUser, users]);
 
   const userTasks = tasks.filter(t => t.assigneeId === selectedUser.id);
+  const userCompletedTasks = completedTasks.filter(t => t.assigneeId === selectedUser.id);
   const overdueCount = userTasks.filter(t => t.dueDate < today && t.status !== 'CONCLUIDO').length;
   const todayCount = userTasks.filter(t => t.dueDate === today && t.status !== 'CONCLUIDO').length;
 
@@ -154,6 +158,12 @@ export const TeamView: React.FC<TeamViewProps> = ({
               ))}
             </div>
           )}
+          <CompletedTasksSection
+            tasks={userCompletedTasks}
+            onSelectTask={onSelectTask}
+            onToggleComplete={onToggleComplete}
+            contextKey={selectedUser.id}
+          />
         </div>
       </div>
       <UserManagementModal

@@ -587,7 +587,7 @@ function taskSelect(): string {
 
 export const taskRepository = {
   findAll: async (
-    filter: { projectId?: string; clientId?: string; status?: TaskStatus; assigneeId?: string; search?: string } = {},
+    filter: { projectId?: string; clientId?: string; status?: TaskStatus; assigneeId?: string; search?: string; includeCompleted?: boolean } = {},
     user?: AuthScope
   ): Promise<any[]> => {
     const where: string[] = [];
@@ -595,7 +595,12 @@ export const taskRepository = {
     addRestrictedProjectAccess(where, values, user, 'p');
     if (filter.projectId) { values.push(filter.projectId); where.push(`t.project_id = $${values.length}`); }
     if (filter.clientId) { values.push(filter.clientId); where.push(`p.client_id = $${values.length}`); }
-    if (filter.status) { values.push(filter.status); where.push(`t.status = $${values.length}`); }
+    if (filter.status) {
+      values.push(filter.status);
+      where.push(`t.status = $${values.length}`);
+    } else if (!filter.includeCompleted) {
+      where.push(`t.status <> 'CONCLUIDO'`);
+    }
     if (filter.assigneeId) { values.push(filter.assigneeId); where.push(`t.responsible_user_id = $${values.length}`); }
     if (filter.search) {
       values.push(`%${filter.search}%`);

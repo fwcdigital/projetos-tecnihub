@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Client, Priority, Project, Task, TaskStatus, User } from '../types';
 import { TaskRow } from '../components/TaskRow';
+import { CompletedTasksSection } from '../components/CompletedTasksSection';
 import { 
   Search, 
   Filter, 
@@ -28,6 +29,7 @@ import { PriorityBadge } from '../components/PriorityBadge';
 interface MyWorkViewProps {
   currentUser: User;
   tasks: Task[];
+  completedTasks: Task[];
   projects: Project[];
   clients: Client[];
   users: User[];
@@ -39,6 +41,7 @@ interface MyWorkViewProps {
 export const MyWorkView: React.FC<MyWorkViewProps> = ({
   currentUser,
   tasks,
+  completedTasks,
   projects,
   clients,
   users,
@@ -122,6 +125,34 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
     onlyOverdue, 
     onlyRecurring, 
     todayStr
+  ]);
+
+  const filteredCompletedTasks = useMemo(() => {
+    if (onlyOverdue || (selectedStatus !== 'ALL' && selectedStatus !== 'CONCLUIDO')) return [];
+
+    return completedTasks.filter(task => {
+      if (searchTerm.trim()) {
+        const term = searchTerm.toLowerCase();
+        if (![task.title, task.clientName, task.projectName, task.assigneeName]
+          .some(value => value.toLowerCase().includes(term))) return false;
+      }
+      if (selectedAssignee !== 'ALL' && task.assigneeId !== selectedAssignee) return false;
+      if (selectedClient !== 'ALL' && task.clientId !== selectedClient) return false;
+      if (selectedProject !== 'ALL' && task.projectId !== selectedProject) return false;
+      if (selectedPriority !== 'ALL' && task.priority !== selectedPriority) return false;
+      if (onlyRecurring && !task.isRecurring) return false;
+      return true;
+    });
+  }, [
+    completedTasks,
+    searchTerm,
+    selectedAssignee,
+    selectedClient,
+    selectedProject,
+    selectedStatus,
+    selectedPriority,
+    onlyOverdue,
+    onlyRecurring
   ]);
 
   // Group Chronologically (ClickUp & Linear style)
@@ -547,7 +578,6 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
             { id: 'A_FAZER', label: 'A Fazer', color: 'border-blue-500/40 text-blue-300' },
             { id: 'EM_ANDAMENTO', label: 'Em Andamento', color: 'border-emerald-500/40 text-emerald-300' },
             { id: 'EM_REVISAO', label: 'Em Revisão / Aprovação', color: 'border-purple-500/40 text-purple-300' },
-            { id: 'CONCLUIDO', label: 'Concluído', color: 'border-teal-500/40 text-teal-300' },
           ].map(column => {
             const colTasks = filteredTasks.filter(t => t.status === column.id);
             return (
@@ -583,6 +613,13 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
           })}
         </div>
       )}
+
+      <CompletedTasksSection
+        tasks={filteredCompletedTasks}
+        onSelectTask={onSelectTask}
+        onToggleComplete={onToggleComplete}
+        contextKey={`${selectedAssignee}:${selectedClient}:${selectedProject}`}
+      />
     </div>
   );
 };

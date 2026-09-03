@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Project, Task, User, Client } from '../types';
 import { TaskRow } from '../components/TaskRow';
+import { CompletedTasksSection } from '../components/CompletedTasksSection';
 import { StatusBadge } from '../components/StatusBadge';
 import { PriorityBadge } from '../components/PriorityBadge';
 import { 
@@ -25,6 +26,7 @@ import { UserAvatar } from '../components/UserAvatar';
 interface ProjectDetailViewProps {
   project: Project;
   tasks: Task[];
+  completedTasks: Task[];
   onBack: () => void;
   onSelectTask: (task: Task) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
@@ -37,6 +39,7 @@ interface ProjectDetailViewProps {
 export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   project,
   tasks,
+  completedTasks,
   onBack,
   onSelectTask,
   onToggleComplete,
@@ -45,7 +48,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   onOpenEditProject,
   onSaveBriefing
 }) => {
-  const [activeTab, setActiveTab] = useState<'ALL' | 'TODO' | 'PROGRESS' | 'DONE' | 'DOCS'>('ALL');
+  const [activeTab, setActiveTab] = useState<'ALL' | 'TODO' | 'PROGRESS' | 'DOCS'>('ALL');
   const [briefing, setBriefing] = useState<Record<string, string>>({});
   const [savingBriefing, setSavingBriefing] = useState(false);
   const canEdit = currentUser.role !== 'COLABORADOR';
@@ -60,15 +63,16 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   }, [project]);
 
   const projectTasks = tasks.filter(t => t.projectId === project.id);
+  const projectCompletedTasks = completedTasks.filter(t => t.projectId === project.id);
   
   const filteredTasks = projectTasks.filter(t => {
     if (activeTab === 'TODO') return t.status === 'A_FAZER' || t.status === 'BACKLOG';
     if (activeTab === 'PROGRESS') return t.status === 'EM_ANDAMENTO' || t.status === 'AGUARDANDO_CLIENTE' || t.status === 'EM_REVISAO';
-    if (activeTab === 'DONE') return t.status === 'CONCLUIDO';
     return true;
   });
 
-  const completedCount = projectTasks.filter(t => t.status === 'CONCLUIDO').length;
+  const completedCount = projectCompletedTasks.length;
+  const totalTaskCount = projectTasks.length + completedCount;
   const overdueCount = projectTasks.filter(t => t.dueDate < new Date().toISOString().slice(0, 10) && t.status !== 'CONCLUIDO').length;
 
   return (
@@ -122,7 +126,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
             </div>
             <div className="w-px h-8 bg-zinc-800" />
             <div className="text-center px-2">
-              <span className="block text-lg font-black text-white font-mono">{completedCount}/{projectTasks.length}</span>
+              <span className="block text-lg font-black text-white font-mono">{completedCount}/{totalTaskCount}</span>
               <span className="text-[10px] uppercase font-bold text-zinc-500">Tarefas</span>
             </div>
           </div>
@@ -191,14 +195,6 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
             Em Andamento ({projectTasks.filter(t => t.status === 'EM_ANDAMENTO' || t.status === 'EM_REVISAO').length})
           </button>
           <button
-            onClick={() => setActiveTab('DONE')}
-            className={`px-3 py-1.5 rounded-lg font-semibold transition-colors ${
-              activeTab === 'DONE' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            Concluídas ({completedCount})
-          </button>
-          <button
             onClick={() => setActiveTab('DOCS')}
             className={`px-3 py-1.5 rounded-lg font-semibold transition-colors ${
               activeTab === 'DOCS' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
@@ -227,6 +223,12 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               />
             ))
           )}
+          <CompletedTasksSection
+            tasks={projectCompletedTasks}
+            onSelectTask={onSelectTask}
+            onToggleComplete={onToggleComplete}
+            contextKey={project.id}
+          />
         </div>
       ) : (
         <div className="p-5 rounded-2xl bg-[#121216] border border-zinc-800 space-y-4 text-xs">

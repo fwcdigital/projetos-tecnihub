@@ -24,10 +24,12 @@ import {
 } from 'lucide-react';
 import { StatusBadge } from '../components/StatusBadge';
 import { PriorityBadge } from '../components/PriorityBadge';
+import { CompletedTasksSection } from '../components/CompletedTasksSection';
 import { mockUsers } from '../data/mockData';
 
 interface RecurrencesViewProps {
   tasks: Task[];
+  completedTasks: Task[];
   projects: Project[];
   clients: Client[];
   onSelectTask: (task: Task) => void;
@@ -38,6 +40,7 @@ interface RecurrencesViewProps {
 
 export const RecurrencesView: React.FC<RecurrencesViewProps> = ({
   tasks,
+  completedTasks,
   projects,
   clients,
   onSelectTask,
@@ -821,6 +824,12 @@ export const RecurrencesView: React.FC<RecurrencesViewProps> = ({
           </div>
         </div>
       )}
+      <CompletedTasksSection
+        tasks={completedTasks.filter(task => task.isRecurring)}
+        onSelectTask={onSelectTask}
+        onToggleComplete={onToggleComplete}
+        contextKey="recurrences"
+      />
     </div>
   );
 };

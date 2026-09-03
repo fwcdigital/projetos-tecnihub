@@ -25,14 +25,18 @@ async function validateResponsible(project: any, userId: string, req: AuthReques
 
 taskRouter.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { projectId, clientId, status, assigneeId, search } = req.query;
+    const { projectId, clientId, status, assigneeId, search, includeCompleted } = req.query;
     if (projectId && !isUuid(String(projectId))) return res.status(400).json({ error: 'Projeto inválido.' });
     if (clientId && !isUuid(String(clientId))) return res.status(400).json({ error: 'Cliente inválido.' });
     if (assigneeId && !isUuid(String(assigneeId))) return res.status(400).json({ error: 'Responsável inválido.' });
     if (status && !TASK_STATUSES.includes(status as TaskStatus)) return res.status(400).json({ error: 'Status de tarefa inválido.' });
+    if (includeCompleted && !['true', 'false'].includes(String(includeCompleted))) {
+      return res.status(400).json({ error: 'O filtro includeCompleted deve ser true ou false.' });
+    }
     const tasks = await taskRepository.findAll({
       projectId: projectId as string, clientId: clientId as string, status: status as TaskStatus,
-      assigneeId: assigneeId as string, search: search as string
+      assigneeId: assigneeId as string, search: search as string,
+      includeCompleted: String(includeCompleted) === 'true'
     }, req.user);
     return res.json({ success: true, total: tasks.length, tasks });
   } catch (error) {

@@ -143,6 +143,61 @@ test('repositórios persistem clientes/projetos e aplicam o escopo RBAC', async 
     useAsPool(database);
     assert.equal((await taskRepository.findAll({}, { id: ids.superAdmin, role: 'SUPER_ADMIN' })).length, 2);
 
+    const taskThree = await taskRepository.create({
+      project_id: projectOne.id, title: 'Tarefa Projeto A 2', description: '', responsible_user_id: ids.collaborator,
+      status: 'A_FAZER', priority: 'NORMAL', start_date: '2026-09-03', due_date: '2026-09-12', due_time: null,
+      completed_at: null, created_by: ids.superAdmin
+    });
+    const taskFour = await taskRepository.create({
+      project_id: projectOne.id, title: 'Tarefa Projeto A 3', description: '', responsible_user_id: ids.collaborator,
+      status: 'EM_ANDAMENTO', priority: 'BAIXA', start_date: '2026-09-03', due_date: '2026-09-13', due_time: null,
+      completed_at: null, created_by: ids.superAdmin
+    });
+
+    const completedAt = new Date().toISOString();
+    const completedTask = await taskRepository.update(taskOne.id, { status: 'CONCLUIDO', completed_at: completedAt });
+    assert.equal(completedTask?.status, 'CONCLUIDO');
+    assert.equal(completedTask?.completedAt, completedAt);
+
+    const activeProjectTasks = await taskRepository.findAll(
+      { projectId: projectOne.id },
+      { id: ids.collaborator, role: 'COLLABORATOR' }
+    );
+    assert.deepEqual(new Set(activeProjectTasks.map(task => task.id)), new Set([taskThree.id, taskFour.id]));
+    assert.deepEqual(
+      (await taskRepository.findAll(
+        { projectId: projectOne.id, status: 'CONCLUIDO' },
+        { id: ids.collaborator, role: 'COLLABORATOR' }
+      )).map(task => task.id),
+      [taskOne.id]
+    );
+    assert.equal((await taskRepository.findAll(
+      { projectId: projectOne.id, includeCompleted: true },
+      { id: ids.collaborator, role: 'COLLABORATOR' }
+    )).length, 3);
+    assert.equal((await taskRepository.findAll(
+      { projectId: projectOne.id, status: 'CONCLUIDO' },
+      { id: ids.outsider, role: 'COLLABORATOR' }
+    )).length, 0);
+
+    // Simula novo carregamento/reinício com a separação entre ativas e concluídas preservada.
+    setDatabasePoolForTests(null);
+    useAsPool(database);
+    assert.equal((await taskRepository.findAll({ projectId: projectOne.id }, { id: ids.superAdmin, role: 'SUPER_ADMIN' })).length, 2);
+    assert.equal((await taskRepository.findAll(
+      { projectId: projectOne.id, status: 'CONCLUIDO' },
+      { id: ids.superAdmin, role: 'SUPER_ADMIN' }
+    )).length, 1);
+
+    const reopenedTask = await taskRepository.update(taskOne.id, { status: 'A_FAZER', completed_at: null });
+    assert.equal(reopenedTask?.status, 'A_FAZER');
+    assert.equal(reopenedTask?.completedAt, undefined);
+    assert.equal((await taskRepository.findAll({ projectId: projectOne.id }, { id: ids.superAdmin, role: 'SUPER_ADMIN' })).length, 3);
+    assert.equal((await taskRepository.findAll(
+      { projectId: projectOne.id, status: 'CONCLUIDO' },
+      { id: ids.superAdmin, role: 'SUPER_ADMIN' }
+    )).length, 0);
+
     const persisted = await database.query<{ project_id: string; user_id: string; member_role: string }>(
       `SELECT project_id, user_id, member_role FROM project_members
        WHERE project_id = $1 ORDER BY member_role DESC`,

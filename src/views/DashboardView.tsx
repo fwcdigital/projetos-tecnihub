@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Client, Project, Task, User } from '../types';
 import { TaskRow } from '../components/TaskRow';
+import { CompletedTasksSection } from '../components/CompletedTasksSection';
 import { 
   CheckSquare, 
   AlertTriangle, 
@@ -28,6 +29,7 @@ import { UserAvatar } from '../components/UserAvatar';
 interface DashboardViewProps {
   currentUser: User;
   tasks: Task[];
+  completedTasks: Task[];
   projects: Project[];
   clients: Client[];
   users: User[];
@@ -41,6 +43,7 @@ interface DashboardViewProps {
 export const DashboardView: React.FC<DashboardViewProps> = ({
   currentUser,
   tasks,
+  completedTasks,
   projects,
   clients,
   users,
@@ -76,9 +79,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const upcomingTasks = tasks.filter(t => t.dueDate > todayStr && t.dueDate <= '2026-09-08' && t.status !== 'CONCLUIDO');
   // Active Projects
   const activeProjects = projects.filter(p => p.status === 'EM_ANDAMENTO' || p.status === 'PLANEJAMENTO');
-  // Completed Tasks count
-  const completedTasks = tasks.filter(t => t.status === 'CONCLUIDO');
-
   const handleToggleLoadMore = () => {
     if (!showMoreUpcoming) {
       setIsLoadingMore(true);
@@ -582,6 +582,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      <CompletedTasksSection
+        tasks={completedTasks}
+        onSelectTask={onSelectTask}
+        onToggleComplete={onToggleComplete}
+        contextKey="dashboard"
+      />
     </div>
   );
 };

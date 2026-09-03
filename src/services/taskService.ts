@@ -7,6 +7,7 @@ export interface TaskFilter {
   status?: TaskStatus;
   assigneeId?: string;
   search?: string;
+  includeCompleted?: boolean;
 }
 
 export const taskService = {
@@ -19,6 +20,7 @@ export const taskService = {
       if (filter?.status) params.append('status', filter.status);
       if (filter?.assigneeId) params.append('assigneeId', filter.assigneeId);
       if (filter?.search) params.append('search', filter.search);
+      if (filter?.includeCompleted) params.append('includeCompleted', 'true');
 
       const queryString = params.toString() ? `?${params.toString()}` : '';
       const response = await api.get<{ success: boolean; total: number; tasks: Task[] }>(`/api/tasks${queryString}`);
