@@ -26,6 +26,7 @@ interface TaskRowProps {
   showDate?: boolean;
   onUpdateTask?: (task: Task) => void;
   projects?: Project[];
+  layout?: 'DEFAULT' | 'STACKED';
 }
 
 export const TaskRow: React.FC<TaskRowProps> = ({
@@ -35,6 +36,7 @@ export const TaskRow: React.FC<TaskRowProps> = ({
   showDate = true,
   onUpdateTask,
   projects = [],
+  layout = 'DEFAULT',
 }) => {
   const [expanded, setExpanded] = useState(false);
   const isCompleted = task.status === 'CONCLUIDO';
@@ -46,11 +48,27 @@ export const TaskRow: React.FC<TaskRowProps> = ({
   const completedChecklist = task.checklist.filter(c => c.completed).length;
 
   const isOverdue = task.dueDate < new Date().toISOString().slice(0, 10) && !isCompleted;
+  const stacked = layout === 'STACKED';
+  const controls = () => <>
+    <div className="flex flex-shrink-0 items-center gap-2 text-[11px] text-zinc-500">
+      {totalChecklist > 0 && <span className={`flex items-center gap-1 ${completedChecklist === totalChecklist ? 'text-emerald-400' : 'text-zinc-400'}`} title={`Checklist: ${completedChecklist}/${totalChecklist} concluídos`}><CheckSquare size={12} className="flex-shrink-0" /><span>{completedChecklist}/{totalChecklist}</span></span>}
+      {task.comments.length > 0 && <span className="flex items-center gap-1 text-zinc-400" title={`${task.comments.length} comentários`}><MessageSquare size={12} className="flex-shrink-0" /><span>{task.comments.length}</span></span>}
+      {task.attachments.length > 0 && <span className="flex items-center gap-1 text-zinc-400" title={`${task.attachments.length} arquivos`}><Paperclip size={12} className="flex-shrink-0" /><span>{task.attachments.length}</span></span>}
+    </div>
+    {showDate && <TaskDateRangePicker task={task} onChange={onUpdateTask} />}
+    <div className="flex-shrink-0">
+      {onUpdateTask && task.availableAssignees?.length ? <AssigneePicker users={task.availableAssignees} selectedIds={task.participantIds} selectedAssignees={assignees} onChange={participantIds => onUpdateTask({ ...task, participantIds })} label="" /> : <AvatarGroup assignees={assignees} />}
+    </div>
+    <div className="flex-shrink-0" onClick={event => event.stopPropagation()}>
+      <StatusPicker value={task.status} options={TASK_STATUS_OPTIONS} onChange={onUpdateTask ? status => onUpdateTask({ ...task, status: status as TaskStatus }) : undefined} ariaLabel={`Alterar status de ${task.title}`} />
+    </div>
+    <TaskActionsMenu task={task} onOpen={() => onSelectTask(task)} onToggleComplete={event => onToggleComplete(task.id, event)} />
+  </>;
 
   return (
     <div>
     <div
-      className={`group relative flex flex-col justify-between gap-1.5 overflow-visible rounded-lg border px-2.5 py-1.5 transition-all md:flex-row md:items-center md:gap-2.5 ${
+      className={`group relative flex justify-between overflow-visible rounded-lg border px-2.5 py-1.5 transition-all ${stacked ? 'flex-col items-stretch gap-2' : 'flex-col gap-1.5 md:flex-row md:items-center md:gap-2.5'} ${
         isCompleted 
           ? 'bg-[#101014]/60 border-zinc-800/40 opacity-70 hover:opacity-100' 
           : isOverdue
@@ -77,68 +95,24 @@ export const TaskRow: React.FC<TaskRowProps> = ({
         </button>
 
         {/* Priority Badge */}
-        <div className="flex-shrink-0"><PriorityPicker value={task.priority} onChange={onUpdateTask ? priority => onUpdateTask({ ...task, priority }) : undefined} /></div>
+        {!stacked && <div className="flex-shrink-0"><PriorityPicker value={task.priority} onChange={onUpdateTask ? priority => onUpdateTask({ ...task, priority }) : undefined} /></div>}
 
         {/* Title and Metadata */}
-        <div className="flex min-w-0 flex-1 flex-col gap-1 overflow-visible lg:flex-row lg:items-center lg:gap-2.5">
-          <InlineTitleEditor value={task.title} completed={isCompleted} onOpen={() => onSelectTask(task)} onSave={onUpdateTask ? title => onUpdateTask({ ...task, title }) : undefined} />
+        <div className={`flex min-w-0 flex-1 flex-col gap-1 overflow-visible ${stacked ? '' : 'lg:flex-row lg:items-center lg:gap-2.5'}`}>
+          <InlineTitleEditor value={task.title} completed={isCompleted} wrap={stacked} onOpen={() => onSelectTask(task)} onSave={onUpdateTask ? title => onUpdateTask({ ...task, title }) : undefined} />
 
           {/* Client & Project Badges */}
           <div className="flex items-center gap-1.5 flex-wrap min-w-0 flex-shrink">
+            {stacked && <PriorityPicker value={task.priority} onChange={onUpdateTask ? priority => onUpdateTask({ ...task, priority }) : undefined} />}
             <TaskContextPicker task={task} projects={projects} mode="CLIENT" onChange={onUpdateTask ? project => onUpdateTask({ ...task, projectId: project.id, projectName: project.name, clientId: project.clientId, clientName: project.clientName }) : undefined} />
             <TaskContextPicker task={task} projects={projects} mode="PROJECT" onChange={onUpdateTask ? project => onUpdateTask({ ...task, projectId: project.id, projectName: project.name, clientId: project.clientId, clientName: project.clientName }) : undefined} />
             {task.isRecurring && task.recurrence && <RecurrencePopover task={task} onChange={onUpdateTask} />}
+            {stacked && <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2.5 sm:gap-3">{controls()}</div>}
           </div>
         </div>
       </div>
 
-      {/* Right section: Indicators, Due Date, Assignee, Status, Action Menu */}
-      <div className="flex items-center justify-between md:justify-end gap-2.5 sm:gap-3 flex-shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-zinc-800/60 min-w-0">
-        {/* Indicators (Checklist, Comments, Attachments) */}
-        <div className="flex items-center gap-2 text-zinc-500 text-[11px] flex-shrink-0">
-          {totalChecklist > 0 && (
-            <span 
-              className={`flex items-center gap-1 ${
-                completedChecklist === totalChecklist ? 'text-emerald-400' : 'text-zinc-400'
-              }`}
-              title={`Checklist: ${completedChecklist}/${totalChecklist} concluídos`}
-            >
-              <CheckSquare size={12} className="flex-shrink-0" />
-              <span>{completedChecklist}/{totalChecklist}</span>
-            </span>
-          )}
-
-          {task.comments.length > 0 && (
-            <span className="flex items-center gap-1 text-zinc-400" title={`${task.comments.length} comentários`}>
-              <MessageSquare size={12} className="flex-shrink-0" />
-              <span>{task.comments.length}</span>
-            </span>
-          )}
-
-          {task.attachments.length > 0 && (
-            <span className="flex items-center gap-1 text-zinc-400" title={`${task.attachments.length} arquivos`}>
-              <Paperclip size={12} className="flex-shrink-0" />
-              <span>{task.attachments.length}</span>
-            </span>
-          )}
-        </div>
-
-        {/* Due Date & Time indicator with intelligent color coding */}
-        {showDate && <TaskDateRangePicker task={task} onChange={onUpdateTask} />}
-
-        {/* Assignee Avatar & Tooltip */}
-        <div className="flex-shrink-0">
-          {onUpdateTask && task.availableAssignees?.length ? <AssigneePicker users={task.availableAssignees} selectedIds={task.participantIds} selectedAssignees={assignees} onChange={participantIds => onUpdateTask({ ...task, participantIds })} label="" /> : <AvatarGroup assignees={assignees} />}
-        </div>
-
-        {/* Status Badge */}
-        <div className="flex-shrink-0" onClick={event => event.stopPropagation()}>
-          <StatusPicker value={task.status} options={TASK_STATUS_OPTIONS} onChange={onUpdateTask ? status => onUpdateTask({ ...task, status: status as TaskStatus }) : undefined} ariaLabel={`Alterar status de ${task.title}`} />
-        </div>
-
-        {/* Quick Row Action */}
-        <TaskActionsMenu task={task} onOpen={() => onSelectTask(task)} onToggleComplete={event => onToggleComplete(task.id, event)} />
-      </div>
+      {!stacked && <div className="flex min-w-0 flex-shrink-0 items-center justify-between gap-2.5 border-t border-zinc-800/60 pt-2 sm:gap-3 md:justify-end md:border-t-0 md:pt-0">{controls()}</div>}
     </div>
     {expanded && onUpdateTask && <ExpandableTaskChildren task={task} users={task.availableAssignees || []} onUpdateTask={onUpdateTask} />}
     </div>

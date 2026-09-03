@@ -59,7 +59,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
   const totalTaskCount = clientTasks.length + clientCompletedTasks.length;
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6 animate-in fade-in duration-150">
+    <div className="mx-auto max-w-[1800px] space-y-6 p-4 animate-in fade-in duration-150 sm:p-6">
       {/* Back button */}
       <div className="flex items-center justify-between">
         <button

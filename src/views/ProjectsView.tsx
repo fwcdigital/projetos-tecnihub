@@ -84,7 +84,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ projects, clients, t
   const dateControl = (project: Project) => <DateRangePicker startDate={project.startDate} dueDate={project.dueDate} title="Período do projeto" showTime={false} requireDueDate allowClearStart={false} onChange={canChangeDates ? range => void onUpdateProject(project, { startDate: range.startDate || project.startDate, dueDate: range.dueDate || project.dueDate }) : undefined} />;
 
   return (
-    <div className="mx-auto max-w-[1600px] space-y-4 p-4 sm:p-6">
+    <div className="mx-auto max-w-[1800px] space-y-4 p-4 sm:p-6">
       <div className="flex flex-col justify-between gap-4 border-b border-zinc-800 pb-3 sm:flex-row sm:items-end">
         <div><div className="flex items-center gap-2"><h1 className="text-xl font-black tracking-tight text-white sm:text-2xl">Projetos</h1><span className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-0.5 font-mono text-xs font-bold text-zinc-300">{filteredProjects.length}</span></div><p className="mt-1 text-xs text-zinc-400">Progresso, prazos, responsáveis e equipe em uma visão operacional.</p></div>
         <div className="flex items-center gap-2"><ViewModeSwitcher value={viewMode} onChange={setViewMode} />{onOpenNewProject && <button type="button" onClick={onOpenNewProject} className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-bold text-zinc-950 hover:bg-zinc-100"><Plus size={13} />Novo projeto</button>}</div>

@@ -6,9 +6,10 @@ interface InlineTitleEditorProps {
   onOpen: () => void;
   onSave?: (value: string) => void | Promise<void>;
   completed?: boolean;
+  wrap?: boolean;
 }
 
-export const InlineTitleEditor: React.FC<InlineTitleEditorProps> = ({ value, onOpen, onSave, completed }) => {
+export const InlineTitleEditor: React.FC<InlineTitleEditorProps> = ({ value, onOpen, onSave, completed, wrap = false }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -51,7 +52,7 @@ export const InlineTitleEditor: React.FC<InlineTitleEditorProps> = ({ value, onO
       <button
         type="button"
         onClick={event => { event.stopPropagation(); onOpen(); }}
-        className={`min-w-0 truncate text-left text-xs font-semibold text-zinc-100 hover:text-sky-200 ${completed ? 'font-normal text-zinc-400 line-through' : ''}`}
+        className={`min-w-0 text-left font-semibold text-zinc-100 hover:text-sky-200 ${wrap ? 'whitespace-normal break-words text-[13px] leading-5' : 'truncate text-xs'} ${completed ? 'font-normal text-zinc-400 line-through' : ''}`}
         title={value}
       >
         {value}

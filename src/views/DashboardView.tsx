@@ -20,7 +20,9 @@ import {
   ChevronUp,
   ListPlus,
   Loader2,
-  Calendar
+  Calendar,
+  PanelRightClose,
+  PanelRightOpen
 } from 'lucide-react';
 import { isClosedProjectStatus } from '../services/projectStatusService';
 import { UserAvatar } from '../components/UserAvatar';
@@ -80,6 +82,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Load more / Expand upcoming tasks state
   const [showMoreUpcoming, setShowMoreUpcoming] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Overdue Tasks
   const overdueTasks = tasks.filter(t => t.dueDate < todayStr && t.status !== 'CONCLUIDO');
@@ -112,7 +115,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   };
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6 animate-in fade-in duration-200">
+    <div className="mx-auto max-w-[1800px] space-y-6 p-4 animate-in fade-in duration-200 sm:p-6">
       {/* Top Greeting Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-zinc-800/80">
         <div>
@@ -246,9 +249,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* Main Grid: Left Operational Focus & Right Agency Pulse */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className={`grid grid-cols-1 gap-6 ${sidebarCollapsed ? 'lg:grid-cols-[minmax(0,1fr)_48px]' : 'lg:grid-cols-3'}`}>
         {/* Left 2 Cols: Demandas Críticas e Hoje */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className={`min-w-0 space-y-6 ${sidebarCollapsed ? '' : 'lg:col-span-2'}`}>
           {/* Section: Atrasadas */}
           {overdueTasks.length > 0 && (
             <div className="space-y-2.5">
@@ -271,6 +274,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     onToggleComplete={onToggleComplete}
                     onUpdateTask={onUpdateTask}
                     projects={projects}
+                    layout="STACKED"
                   />
                 ))}
               </div>
@@ -304,6 +308,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   onToggleComplete={onToggleComplete}
                   onUpdateTask={onUpdateTask}
                   projects={projects}
+                  layout="STACKED"
                 />
               ))}
             </div>
@@ -329,6 +334,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   onToggleComplete={onToggleComplete}
                   onUpdateTask={onUpdateTask}
                   projects={projects}
+                  layout="STACKED"
                 />
               ))}
             </div>
@@ -359,6 +365,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         onToggleComplete={onToggleComplete}
                         onUpdateTask={onUpdateTask}
                         projects={projects}
+                        layout="STACKED"
                       />
                     ))}
                   </div>
@@ -387,6 +394,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         onToggleComplete={onToggleComplete}
                         onUpdateTask={onUpdateTask}
                         projects={projects}
+                        layout="STACKED"
                       />
                     ))}
                   </div>
@@ -415,6 +423,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         onToggleComplete={onToggleComplete}
                         onUpdateTask={onUpdateTask}
                         projects={projects}
+                        layout="STACKED"
                       />
                     ))}
                   </div>
@@ -482,11 +491,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             onUpdateTask={onUpdateTask}
             projects={projects}
             contextKey="dashboard"
+            taskLayout="STACKED"
           />
         </div>
 
         {/* Right 1 Col: Status dos Projetos e Recorrências */}
-        <div className="space-y-6">
+        <div className={sidebarCollapsed ? 'flex items-start justify-end' : 'space-y-6'}>
+          {sidebarCollapsed ? (
+            <button type="button" onClick={() => setSidebarCollapsed(false)} className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-800 bg-[#121216] text-zinc-400 transition-colors hover:border-zinc-600 hover:text-white" title="Expandir painel lateral" aria-label="Expandir painel lateral"><PanelRightOpen size={16} /></button>
+          ) : <>
+          <div className="flex justify-end">
+            <button type="button" onClick={() => setSidebarCollapsed(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-[#121216] px-2.5 py-1.5 text-[10px] font-semibold text-zinc-400 transition-colors hover:border-zinc-600 hover:text-white" title="Minimizar painel lateral"><PanelRightClose size={13} />Minimizar painel</button>
+          </div>
           {/* Projetos em Andamento Card */}
           <div className="p-4 rounded-2xl bg-[#121216] border border-zinc-800 space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
@@ -626,6 +642,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               ))}
             </div>
           </div>
+          </>}
         </div>
       </div>
 

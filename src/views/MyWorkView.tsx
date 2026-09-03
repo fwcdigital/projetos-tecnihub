@@ -199,7 +199,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
     onlyRecurring;
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-5 animate-in fade-in duration-150">
+    <div className="mx-auto max-w-[1800px] space-y-5 p-4 animate-in fade-in duration-150 sm:p-6">
       {/* Top Header & View Controls */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 border-b border-zinc-800">
         <div>

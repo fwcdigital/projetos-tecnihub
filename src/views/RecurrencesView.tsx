@@ -45,7 +45,7 @@ export const RecurrencesView: React.FC<RecurrencesViewProps> = ({ routines, task
   };
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5 p-4 sm:p-6">
+    <div className="mx-auto max-w-[1800px] space-y-5 p-4 sm:p-6">
       <div className="flex flex-col gap-4 border-b border-zinc-800 pb-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-500/20 bg-emerald-500/10 text-emerald-400"><Repeat2 size={16} /></span><h1 className="text-xl font-black tracking-tight text-white sm:text-2xl">Rotinas</h1><span className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-0.5 font-mono text-[11px] font-bold text-zinc-300">{filtered.length}</span></div>

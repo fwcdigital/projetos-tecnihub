@@ -48,7 +48,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const daysWithTasks = allCalendarDays.filter(day => day.isCurrentMonth && day.tasks.length > 0);
 
   return (
-    <div className="p-3 sm:p-6 max-w-7xl mx-auto space-y-4 sm:space-y-5 animate-in fade-in duration-150">
+    <div className="mx-auto max-w-[1800px] space-y-4 p-3 animate-in fade-in duration-150 sm:space-y-5 sm:p-6">
       {/* Calendar Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 pb-3 border-b border-zinc-800">
         <div>

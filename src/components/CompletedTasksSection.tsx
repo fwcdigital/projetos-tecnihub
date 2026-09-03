@@ -10,6 +10,7 @@ interface CompletedTasksSectionProps {
   onUpdateTask?: (task: Task) => void;
   contextKey?: string;
   projects?: Project[];
+  taskLayout?: 'DEFAULT' | 'STACKED';
 }
 
 export const CompletedTasksSection: React.FC<CompletedTasksSectionProps> = ({
@@ -18,7 +19,8 @@ export const CompletedTasksSection: React.FC<CompletedTasksSectionProps> = ({
   onToggleComplete,
   onUpdateTask,
   contextKey,
-  projects = []
+  projects = [],
+  taskLayout = 'DEFAULT'
 }) => {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -55,6 +57,7 @@ export const CompletedTasksSection: React.FC<CompletedTasksSectionProps> = ({
               onToggleComplete={onToggleComplete}
               onUpdateTask={onUpdateTask}
               projects={projects}
+              layout={taskLayout}
             />
           ))}
         </div>

@@ -99,7 +99,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   const overdueCount = projectTasks.filter(t => t.dueDate < new Date().toISOString().slice(0, 10) && t.status !== 'CONCLUIDO').length;
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6 animate-in fade-in duration-150">
+    <div className="mx-auto max-w-[1800px] space-y-6 p-4 animate-in fade-in duration-150 sm:p-6">
       {/* Top Back Nav & Quick Actions */}
       <div className="flex items-center justify-between">
         <button
