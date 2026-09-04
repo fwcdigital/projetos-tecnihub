@@ -120,7 +120,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
                       </span>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      <StatusBadge status={t.status} size="sm" />
+                      <StatusBadge status={t.status} label={t.statusName} color={t.statusColor} size="sm" />
                       <ArrowRight size={12} className="text-zinc-600" />
                     </div>
                   </div>
@@ -214,7 +214,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
                       <span className="font-semibold text-zinc-200">{u.name}</span>
                       <span className="text-[10px] text-zinc-500">{u.position}</span>
                     </div>
-                    <span className="text-[10px] text-zinc-400">{u.currentTasksCount} tarefas ativas</span>
+                    <span className="text-[10px] text-zinc-400">{tasks.filter(task => task.participantIds.includes(u.id)).length} tarefas ativas</span>
                   </div>
                 ))}
               </div>

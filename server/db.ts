@@ -7,19 +7,9 @@ export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'PROJECT_MANAGER' | 'COLLABORAT
 export type UserStatus = 'ACTIVE' | 'INACTIVE';
 export type ClientStatus = 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
 export type ProjectStatus = string;
-export type ProjectType =
-  | 'WEBSITE'
-  | 'LANDING_PAGE'
-  | 'ECOMMERCE'
-  | 'GOOGLE_ADS'
-  | 'META_ADS'
-  | 'SEO'
-  | 'SOCIAL_MEDIA'
-  | 'MAINTENANCE'
-  | 'INTERNAL'
-  | 'OTHER';
+export type ProjectType = string;
 export type Priority = 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW';
-export type TaskStatus = 'BACKLOG' | 'A_FAZER' | 'EM_ANDAMENTO' | 'AGUARDANDO_CLIENTE' | 'EM_REVISAO' | 'CONCLUIDO' | 'BLOQUEADO';
+export type TaskStatus = string;
 export type TaskPriority = 'URGENTE' | 'ALTA' | 'NORMAL' | 'BAIXA';
 
 export interface DbUser {
@@ -58,6 +48,8 @@ export interface DbProject {
   briefing?: Record<string, string>;
   client_id: string;
   project_type: ProjectType;
+  product_id?: string;
+  product_status_id?: string;
   manager_id: string;
   status: ProjectStatus;
   priority: Priority;
@@ -209,6 +201,62 @@ function addRestrictedProjectAccess(where: string[], values: unknown[], user?: A
   }
 }
 
+export interface DbProduct {
+  id: string;
+  name: string;
+  color: string;
+  position: number;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbProductStatus {
+  id: string;
+  product_id: string;
+  name: string;
+  color: string;
+  position: number;
+  active: boolean;
+  is_completed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+function addOperationalAssigneeScope(where: string[], values: unknown[], assigneeId?: string, taskAlias = 't'): void {
+  if (!assigneeId) return;
+  values.push(assigneeId);
+  where.push(`EXISTS (
+    SELECT 1 FROM task_assignees operational_assignee
+    WHERE operational_assignee.task_id = ${taskAlias}.id
+      AND operational_assignee.user_id = $${values.length}
+  )`);
+}
+
+function addOperationalProjectScope(where: string[], values: unknown[], assigneeId?: string, projectAlias = 'p'): void {
+  if (!assigneeId) return;
+  values.push(assigneeId);
+  where.push(`EXISTS (
+    SELECT 1 FROM tasks operational_task
+    WHERE operational_task.project_id = ${projectAlias}.id
+      AND operational_task.parent_task_id IS NULL
+      AND EXISTS (
+        SELECT 1 FROM task_assignees operational_assignee
+        WHERE operational_assignee.task_id = operational_task.id
+          AND operational_assignee.user_id = $${values.length}
+      )
+  )`);
+}
+
+function legacyProjectTypeToProductId(type?: string): string {
+  const mapping: Record<string, string> = {
+    WEBSITE: 'SITE', LANDING_PAGE: 'LANDING_PAGE', ECOMMERCE: 'ECOMMERCE',
+    GOOGLE_ADS: 'PAID_TRAFFIC', META_ADS: 'PAID_TRAFFIC', SEO: 'SEO',
+    MAINTENANCE: 'MAINTENANCE', INTERNAL: 'INTERNAL', OTHER: 'OTHER', SOCIAL_MEDIA: 'OTHER'
+  };
+  return mapping[type || ''] || 'OTHER';
+}
+
 async function enrichProjects(rows: any[]): Promise<any[]> {
   if (rows.length === 0) return [];
 
@@ -260,7 +308,8 @@ async function enrichProjects(rows: any[]): Promise<any[]> {
   return rows.map(row => {
     const {
       client_name, client_company, manager_name, manager_avatar,
-      project_status_name, project_status_color, project_status_active,
+      product_name, product_color, project_status_name, project_status_color, project_status_active, project_status_completed,
+      workflow_statuses,
       ...projectRow
     } = row;
     return {
@@ -269,9 +318,15 @@ async function enrichProjects(rows: any[]): Promise<any[]> {
       clientCompany: client_company || '',
       managerName: manager_name || 'Gestor Não Atribuído',
       managerAvatar: manager_avatar || '',
-      projectStatusName: project_status_name || row.status,
+      productId: row.product_id,
+      productName: product_name || row.product_id,
+      productColor: product_color || '#A1A1AA',
+      projectStatusId: row.product_status_id,
+      projectStatusName: project_status_name || row.product_status_id,
       projectStatusColor: project_status_color || '#A1A1AA',
       projectStatusActive: project_status_active !== false,
+      projectStatusCompleted: Boolean(project_status_completed),
+      workflowStatuses: Array.isArray(workflow_statuses) ? workflow_statuses : [],
       teamMembers: membersByProject.get(row.id) || [],
       resources: resourcesByProject.get(row.id) || []
     };
@@ -560,18 +615,208 @@ export const projectStatusRepository = {
   }
 };
 
+function normalizeProduct(row: any): DbProduct {
+  return {
+    ...row,
+    position: Number(row.position),
+    active: Boolean(row.active),
+    created_at: toIsoString(row.created_at),
+    updated_at: toIsoString(row.updated_at)
+  } as DbProduct;
+}
+
+function normalizeProductStatus(row: any): DbProductStatus {
+  return {
+    ...row,
+    position: Number(row.position),
+    active: Boolean(row.active),
+    created_at: toIsoString(row.created_at),
+    updated_at: toIsoString(row.updated_at)
+  } as DbProductStatus;
+}
+
+export const productRepository = {
+  findAll: async (includeInactive = false): Promise<Array<DbProduct & { projectsCount: number; statusesCount: number }>> => {
+    const result = await getPool().query(
+      `SELECT product.*,
+              COUNT(DISTINCT project.id)::integer AS projects_count,
+              COUNT(DISTINCT product_status.id)::integer AS statuses_count
+       FROM products product
+       LEFT JOIN projects project ON project.product_id = product.id
+       LEFT JOIN product_statuses product_status ON product_status.product_id = product.id
+       ${includeInactive ? '' : 'WHERE product.active = TRUE'}
+       GROUP BY product.id
+       ORDER BY product.position, product.name`
+    );
+    return result.rows.map(row => ({
+      ...normalizeProduct(row),
+      projectsCount: Number(row.projects_count),
+      statusesCount: Number(row.statuses_count)
+    }));
+  },
+
+  findById: async (id: string): Promise<(DbProduct & { projectsCount: number; statusesCount: number }) | null> => {
+    const result = await getPool().query(
+      `SELECT product.*,
+              COUNT(DISTINCT project.id)::integer AS projects_count,
+              COUNT(DISTINCT product_status.id)::integer AS statuses_count
+       FROM products product
+       LEFT JOIN projects project ON project.product_id = product.id
+       LEFT JOIN product_statuses product_status ON product_status.product_id = product.id
+       WHERE product.id = $1
+       GROUP BY product.id`,
+      [id]
+    );
+    if (!result.rowCount) return null;
+    return {
+      ...normalizeProduct(result.rows[0]),
+      projectsCount: Number(result.rows[0].projects_count),
+      statusesCount: Number(result.rows[0].statuses_count)
+    };
+  },
+
+  create: async (data: Pick<DbProduct, 'id' | 'name' | 'color'> & Partial<Pick<DbProduct, 'active'>>): Promise<DbProduct> => {
+    const result = await getPool().query(
+      `INSERT INTO products (id, name, color, position, active)
+       VALUES ($1, $2, $3, COALESCE((SELECT MAX(position) + 1 FROM products), 0), $4)
+       RETURNING *`,
+      [data.id, data.name, data.color, data.active ?? true]
+    );
+    return normalizeProduct(result.rows[0]);
+  },
+
+  update: async (id: string, updates: Partial<Pick<DbProduct, 'name' | 'color' | 'active' | 'position'>>): Promise<DbProduct | null> => {
+    const columnMap: Record<string, string> = { name: 'name', color: 'color', active: 'active', position: 'position' };
+    const entries = Object.entries(updates).filter(([key, value]) => key in columnMap && value !== undefined);
+    if (!entries.length) return (await productRepository.findById(id)) as DbProduct | null;
+    const values = entries.map(([, value]) => value);
+    const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
+    values.push(id);
+    const result = await getPool().query(
+      `UPDATE products SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING *`,
+      values
+    );
+    return result.rowCount ? normalizeProduct(result.rows[0]) : null;
+  },
+
+  reorder: async (ids: string[]): Promise<void> => {
+    await withTransaction(async client => {
+      for (const [position, id] of ids.entries()) {
+        await client.query('UPDATE products SET position = $1 WHERE id = $2', [position, id]);
+      }
+    });
+  },
+
+  delete: async (id: string): Promise<boolean> => {
+    const result = await getPool().query('DELETE FROM products WHERE id = $1', [id]);
+    return Boolean(result.rowCount);
+  }
+};
+
+export const productStatusRepository = {
+  findAll: async (productId: string, includeInactive = false): Promise<Array<DbProductStatus & { projectsCount: number; tasksCount: number }>> => {
+    const result = await getPool().query(
+      `SELECT product_status.*, COUNT(DISTINCT project.id)::integer AS projects_count,
+              COUNT(DISTINCT task.id)::integer AS tasks_count
+       FROM product_statuses product_status
+       LEFT JOIN projects project ON project.product_status_id = product_status.id
+       LEFT JOIN tasks task ON task.status = product_status.id
+       WHERE product_status.product_id = $1
+       ${includeInactive ? '' : 'AND product_status.active = TRUE'}
+       GROUP BY product_status.id
+       ORDER BY product_status.position, product_status.name`,
+      [productId]
+    );
+    return result.rows.map(row => ({
+      ...normalizeProductStatus(row), projectsCount: Number(row.projects_count), tasksCount: Number(row.tasks_count)
+    }));
+  },
+
+  findById: async (productId: string, id: string): Promise<(DbProductStatus & { projectsCount: number; tasksCount: number }) | null> => {
+    const result = await getPool().query(
+      `SELECT product_status.*, COUNT(DISTINCT project.id)::integer AS projects_count,
+              COUNT(DISTINCT task.id)::integer AS tasks_count
+       FROM product_statuses product_status
+       LEFT JOIN projects project ON project.product_status_id = product_status.id
+       LEFT JOIN tasks task ON task.status = product_status.id
+       WHERE product_status.product_id = $1 AND product_status.id = $2
+       GROUP BY product_status.id`,
+      [productId, id]
+    );
+    if (!result.rowCount) return null;
+    return {
+      ...normalizeProductStatus(result.rows[0]),
+      projectsCount: Number(result.rows[0].projects_count),
+      tasksCount: Number(result.rows[0].tasks_count)
+    };
+  },
+
+  findByStatusId: async (id: string): Promise<DbProductStatus | null> => {
+    const result = await getPool().query('SELECT * FROM product_statuses WHERE id = $1', [id]);
+    return result.rowCount ? normalizeProductStatus(result.rows[0]) : null;
+  },
+
+  findFirstActive: async (productId: string): Promise<DbProductStatus | null> => {
+    const result = await getPool().query(
+      'SELECT * FROM product_statuses WHERE product_id = $1 AND active = TRUE ORDER BY position, name LIMIT 1',
+      [productId]
+    );
+    return result.rowCount ? normalizeProductStatus(result.rows[0]) : null;
+  },
+
+  create: async (data: Pick<DbProductStatus, 'id' | 'product_id' | 'name' | 'color'> & Partial<Pick<DbProductStatus, 'active'>>): Promise<DbProductStatus> => {
+    const result = await getPool().query(
+      `INSERT INTO product_statuses (id, product_id, name, color, position, active)
+       VALUES ($1, $2, $3, $4, COALESCE((SELECT MAX(position) + 1 FROM product_statuses WHERE product_id = $2::varchar), 0), $5)
+       RETURNING *`,
+      [data.id, data.product_id, data.name, data.color, data.active ?? true]
+    );
+    return normalizeProductStatus(result.rows[0]);
+  },
+
+  update: async (productId: string, id: string, updates: Partial<Pick<DbProductStatus, 'name' | 'color' | 'active' | 'position' | 'is_completed'>>): Promise<DbProductStatus | null> => {
+    const columnMap: Record<string, string> = { name: 'name', color: 'color', active: 'active', position: 'position', is_completed: 'is_completed' };
+    const entries = Object.entries(updates).filter(([key, value]) => key in columnMap && value !== undefined);
+    if (!entries.length) return (await productStatusRepository.findById(productId, id)) as DbProductStatus | null;
+    const values = entries.map(([, value]) => value);
+    const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
+    values.push(productId, id);
+    const result = await getPool().query(
+      `UPDATE product_statuses SET ${assignments.join(', ')}
+       WHERE product_id = $${values.length - 1} AND id = $${values.length}
+       RETURNING *`,
+      values
+    );
+    return result.rowCount ? normalizeProductStatus(result.rows[0]) : null;
+  },
+
+  reorder: async (productId: string, ids: string[]): Promise<void> => {
+    await withTransaction(async client => {
+      for (const [position, id] of ids.entries()) {
+        await client.query('UPDATE product_statuses SET position = $1 WHERE product_id = $2 AND id = $3', [position, productId, id]);
+      }
+    });
+  },
+
+  delete: async (productId: string, id: string): Promise<boolean> => {
+    const result = await getPool().query('DELETE FROM product_statuses WHERE product_id = $1 AND id = $2', [productId, id]);
+    return Boolean(result.rowCount);
+  }
+};
+
 export const projectRepository = {
   findAll: async (
     user?: AuthScope,
-    filter?: { status?: ProjectStatus; clientId?: string; type?: ProjectType; search?: string }
+    filter?: { status?: ProjectStatus; clientId?: string; type?: ProjectType; search?: string; assigneeId?: string }
   ): Promise<any[]> => {
     const where: string[] = [];
     const values: unknown[] = [];
     addRestrictedProjectAccess(where, values, user);
+    addOperationalProjectScope(where, values, filter?.assigneeId);
 
     if (filter?.status) {
       values.push(filter.status);
-      where.push(`p.status = $${values.length}`);
+      where.push(`p.product_status_id = $${values.length}`);
     }
     if (filter?.clientId) {
       values.push(filter.clientId);
@@ -579,7 +824,7 @@ export const projectRepository = {
     }
     if (filter?.type) {
       values.push(filter.type);
-      where.push(`p.project_type = $${values.length}`);
+      where.push(`p.product_id = $${values.length}`);
     }
     if (filter?.search) {
       values.push(`%${filter.search}%`);
@@ -589,12 +834,22 @@ export const projectRepository = {
     const result = await getPool().query(
       `SELECT p.*, c.name AS client_name, c.company_name AS client_company,
               manager.name AS manager_name, manager.avatar AS manager_avatar,
-              project_status.name AS project_status_name, project_status.color AS project_status_color,
-              project_status.active AS project_status_active
+               product.name AS product_name, product.color AS product_color,
+               project_status.name AS project_status_name, project_status.color AS project_status_color,
+               project_status.active AS project_status_active,
+               project_status.is_completed AS project_status_completed,
+               COALESCE((SELECT json_agg(json_build_object(
+                 'id', workflow.id, 'productId', workflow.product_id, 'name', workflow.name,
+                 'color', workflow.color, 'position', workflow.position, 'active', workflow.active,
+                 'isCompleted', workflow.is_completed, 'projectsCount', 0, 'tasksCount', 0
+               ) ORDER BY workflow.position, workflow.name)
+               FROM product_statuses workflow
+               WHERE workflow.product_id = p.product_id AND (workflow.active = TRUE OR workflow.id = p.product_status_id)), '[]'::json) AS workflow_statuses
        FROM projects p
        INNER JOIN clients c ON c.id = p.client_id
        INNER JOIN users manager ON manager.id = p.manager_id
-       INNER JOIN project_statuses project_status ON project_status.id = p.status
+       INNER JOIN products product ON product.id = p.product_id
+       INNER JOIN product_statuses project_status ON project_status.id = p.product_status_id
        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
        ORDER BY p.created_at DESC`,
       values
@@ -602,19 +857,30 @@ export const projectRepository = {
     return enrichProjects(result.rows);
   },
 
-  findById: async (id: string, user?: AuthScope): Promise<any | null> => {
+  findById: async (id: string, user?: AuthScope, assigneeId?: string): Promise<any | null> => {
     const where = ['p.id = $1'];
     const values: unknown[] = [id];
     addRestrictedProjectAccess(where, values, user);
+    addOperationalProjectScope(where, values, assigneeId);
     const result = await getPool().query(
       `SELECT p.*, c.name AS client_name, c.company_name AS client_company,
               manager.name AS manager_name, manager.avatar AS manager_avatar,
-              project_status.name AS project_status_name, project_status.color AS project_status_color,
-              project_status.active AS project_status_active
+               product.name AS product_name, product.color AS product_color,
+               project_status.name AS project_status_name, project_status.color AS project_status_color,
+               project_status.active AS project_status_active,
+               project_status.is_completed AS project_status_completed,
+               COALESCE((SELECT json_agg(json_build_object(
+                 'id', workflow.id, 'productId', workflow.product_id, 'name', workflow.name,
+                 'color', workflow.color, 'position', workflow.position, 'active', workflow.active,
+                 'isCompleted', workflow.is_completed, 'projectsCount', 0, 'tasksCount', 0
+               ) ORDER BY workflow.position, workflow.name)
+               FROM product_statuses workflow
+               WHERE workflow.product_id = p.product_id AND (workflow.active = TRUE OR workflow.id = p.product_status_id)), '[]'::json) AS workflow_statuses
        FROM projects p
        INNER JOIN clients c ON c.id = p.client_id
        INNER JOIN users manager ON manager.id = p.manager_id
-       INNER JOIN project_statuses project_status ON project_status.id = p.status
+       INNER JOIN products product ON product.id = p.product_id
+       INNER JOIN product_statuses project_status ON project_status.id = p.product_status_id
        WHERE ${where.join(' AND ')}`,
       values
     );
@@ -627,15 +893,25 @@ export const projectRepository = {
     teamUserIds: string[] = []
   ): Promise<any> => {
     const projectId = await withTransaction(async client => {
+      const productId = data.product_id || legacyProjectTypeToProductId(data.project_type);
+      let productStatusId = data.product_status_id;
+      if (!productStatusId) {
+        const initialStatus = await client.query<{ id: string }>(
+          'SELECT id FROM product_statuses WHERE product_id = $1 AND active = TRUE ORDER BY position, name LIMIT 1',
+          [productId]
+        );
+        productStatusId = initialStatus.rows[0]?.id;
+      }
+      if (!productStatusId) throw new Error('Produto sem status ativo para criação do projeto.');
       const projectResult = await client.query<{ id: string }>(
         `INSERT INTO projects (
-          name, description, client_id, project_type, manager_id, status, priority,
+          name, description, client_id, project_type, product_id, product_status_id, manager_id, status, priority,
           start_date, due_date, progress, is_recurring, created_by, briefing
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        RETURNING id`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         RETURNING id`,
         [
-          data.name, data.description, data.client_id, data.project_type, data.manager_id,
-          data.status, data.priority, data.start_date || null, data.due_date || null,
+          data.name, data.description, data.client_id, data.project_type, productId, productStatusId, data.manager_id,
+          data.status || 'PLANNING', data.priority, data.start_date || null, data.due_date || null,
           data.progress, data.is_recurring, data.created_by || null, data.briefing || {}
         ]
       );
@@ -652,15 +928,54 @@ export const projectRepository = {
     teamUserIds?: string[]
   ): Promise<any | null> => {
     const updated = await withTransaction(async client => {
-      const currentResult = await client.query<{ manager_id: string }>(
-        'SELECT manager_id FROM projects WHERE id = $1 FOR UPDATE',
+      const currentResult = await client.query<{ manager_id: string; product_id: string }>(
+        'SELECT manager_id, product_id FROM projects WHERE id = $1 FOR UPDATE',
         [id]
       );
       if (!currentResult.rowCount) return false;
 
       const previousManagerId = currentResult.rows[0].manager_id;
+      const productChanged = Boolean(updates.product_id && updates.product_id !== currentResult.rows[0].product_id);
+      const taskStatusRemap = new Map<string, { id: string; isCompleted: boolean }>();
+      if (productChanged) {
+        const targetStatusId = updates.product_status_id;
+        if (!targetStatusId) throw new Error('A troca de produto exige um novo status compatível.');
+        const [sourceStatuses, targetStatuses] = await Promise.all([
+          client.query<{ id: string; name: string; position: number; is_completed: boolean }>(
+            `SELECT DISTINCT status.id, status.name, status.position, status.is_completed
+             FROM tasks task
+             INNER JOIN product_statuses status ON status.id = task.status
+             WHERE task.project_id = $1`,
+            [id]
+          ),
+          client.query<{ id: string; name: string; position: number; is_completed: boolean }>(
+            `SELECT id, name, position, is_completed
+             FROM product_statuses
+             WHERE product_id = $1 AND (active = TRUE OR id = $2)
+             ORDER BY position, name`,
+            [updates.product_id, targetStatusId]
+          )
+        ]);
+        if (!targetStatuses.rows.some(status => status.id === targetStatusId)) {
+          throw new Error('Status incompatível com o novo produto.');
+        }
+        for (const source of sourceStatuses.rows) {
+          const sameName = targetStatuses.rows.find(target => (
+            target.is_completed === source.is_completed
+            && target.name.localeCompare(source.name, 'pt-BR', { sensitivity: 'base' }) === 0
+          ));
+          const sameSemanticStatuses = targetStatuses.rows.filter(target => target.is_completed === source.is_completed);
+          const nearestPosition = sameSemanticStatuses.reduce<typeof sameSemanticStatuses[number] | undefined>((nearest, target) => (
+            !nearest || Math.abs(target.position - source.position) < Math.abs(nearest.position - source.position) ? target : nearest
+          ), undefined);
+          const fallback = targetStatuses.rows.find(target => target.id === targetStatusId)!;
+          const mapped = sameName || nearestPosition || fallback;
+          taskStatusRemap.set(source.id, { id: mapped.id, isCompleted: mapped.is_completed });
+        }
+      }
       const columnMap: Record<string, string> = {
         name: 'name', description: 'description', client_id: 'client_id', project_type: 'project_type',
+        product_id: 'product_id', product_status_id: 'product_status_id',
         manager_id: 'manager_id', status: 'status', priority: 'priority', start_date: 'start_date',
         due_date: 'due_date', progress: 'progress', is_recurring: 'is_recurring', created_by: 'created_by',
         briefing: 'briefing'
@@ -671,6 +986,17 @@ export const projectRepository = {
         const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
         values.push(id);
         await client.query(`UPDATE projects SET ${assignments.join(', ')} WHERE id = $${values.length}`, values);
+      }
+
+      if (productChanged) {
+        for (const [sourceStatusId, target] of taskStatusRemap) {
+          await client.query(
+            `UPDATE tasks SET status = $1,
+               completed_at = CASE WHEN $2::boolean THEN COALESCE(completed_at, CURRENT_TIMESTAMP) ELSE NULL END
+             WHERE project_id = $3 AND status = $4`,
+            [target.id, target.isCompleted, id, sourceStatusId]
+          );
+        }
       }
 
       const managerId = updates.manager_id || previousManagerId;
@@ -729,6 +1055,11 @@ function normalizeTask(row: any): any {
     })) : [],
     priority: row.priority,
     status: row.status,
+    statusName: row.task_status_name || row.status,
+    statusColor: row.task_status_color || '#A1A1AA',
+    statusCompleted: Boolean(row.task_status_completed),
+    productId: row.product_id,
+    workflowStatuses: Array.isArray(row.workflow_statuses) ? row.workflow_statuses : [],
     startDate: row.start_date ? toDateString(row.start_date) : undefined,
     startTime: row.start_time ? String(row.start_time).slice(0, 5) : undefined,
     dueDate: toDateString(row.due_date),
@@ -757,6 +1088,8 @@ function normalizeTask(row: any): any {
 
 function taskSelect(): string {
   return `SELECT t.*, p.client_id, p.name AS project_name, c.name AS client_name,
+                 p.product_id, task_status.name AS task_status_name, task_status.color AS task_status_color,
+                 task_status.is_completed AS task_status_completed,
                  responsible.name AS responsible_name, responsible.avatar AS responsible_avatar,
                  responsible.job_title AS responsible_job_title, creator.name AS created_by_name,
                  recurrence.id AS recurrence_id, recurrence.frequency AS recurrence_frequency,
@@ -784,12 +1117,22 @@ function taskSelect(): string {
                    FROM project_members member
                    INNER JOIN users member_user ON member_user.id = member.user_id AND member_user.status = 'ACTIVE'
                    WHERE member.project_id = t.project_id
-                 ), '[]'::json) AS available_assignees
-          FROM tasks t
+                  ), '[]'::json) AS available_assignees
+                 ,COALESCE((
+                   SELECT json_agg(json_build_object(
+                     'id', workflow.id, 'productId', workflow.product_id, 'name', workflow.name,
+                     'color', workflow.color, 'position', workflow.position, 'active', workflow.active,
+                     'isCompleted', workflow.is_completed, 'projectsCount', 0, 'tasksCount', 0
+                   ) ORDER BY workflow.position, workflow.name)
+                   FROM product_statuses workflow
+                   WHERE workflow.product_id = p.product_id AND (workflow.active = TRUE OR workflow.id = t.status)
+                 ), '[]'::json) AS workflow_statuses
+           FROM tasks t
           INNER JOIN projects p ON p.id = t.project_id
           INNER JOIN clients c ON c.id = p.client_id
           INNER JOIN users responsible ON responsible.id = t.responsible_user_id
-          INNER JOIN users creator ON creator.id = t.created_by
+           INNER JOIN users creator ON creator.id = t.created_by
+           INNER JOIN product_statuses task_status ON task_status.id = t.status
           LEFT JOIN recurrence_rules recurrence ON recurrence.source_task_id = t.id AND recurrence.status <> 'ENDED'`;
 }
 
@@ -805,13 +1148,13 @@ function normalizeChecklistItem(row: any): any {
   };
 }
 
-async function enrichTasks(rows: any[]): Promise<any[]> {
+async function enrichTasks(rows: any[], assigneeId?: string): Promise<any[]> {
   if (rows.length === 0) return [];
   const tasks = rows.map(normalizeTask);
   const taskIds = tasks.map(task => task.id);
   const subtaskResult = await getPool().query(
-    `${taskSelect()} WHERE t.parent_task_id = ANY($1::uuid[]) ORDER BY t.created_at`,
-    [taskIds]
+    `${taskSelect()} WHERE t.parent_task_id = ANY($1::uuid[])${assigneeId ? ' AND EXISTS (SELECT 1 FROM task_assignees subtask_assignee WHERE subtask_assignee.task_id = t.id AND subtask_assignee.user_id = $2)' : ''} ORDER BY t.created_at`,
+    assigneeId ? [taskIds, assigneeId] : [taskIds]
   );
   const subtasks = subtaskResult.rows.map(normalizeTask);
   const allTaskIds = [...taskIds, ...subtasks.map(task => task.id)];
@@ -864,7 +1207,7 @@ async function enrichTasks(rows: any[]): Promise<any[]> {
 
 export const taskRepository = {
   findAll: async (
-    filter: { projectId?: string; clientId?: string; status?: TaskStatus; assigneeId?: string; search?: string; includeCompleted?: boolean } = {},
+    filter: { projectId?: string; clientId?: string; status?: TaskStatus; assigneeId?: string; search?: string; includeCompleted?: boolean; completedOnly?: boolean } = {},
     user?: AuthScope
   ): Promise<any[]> => {
     const where: string[] = [];
@@ -876,12 +1219,13 @@ export const taskRepository = {
     if (filter.status) {
       values.push(filter.status);
       where.push(`t.status = $${values.length}`);
+    } else if (filter.completedOnly) {
+      where.push('task_status.is_completed = TRUE');
     } else if (!filter.includeCompleted) {
-      where.push(`t.status <> 'CONCLUIDO'`);
+      where.push('task_status.is_completed = FALSE');
     }
     if (filter.assigneeId) {
-      values.push(filter.assigneeId);
-      where.push(`EXISTS (SELECT 1 FROM task_assignees filter_assignee WHERE filter_assignee.task_id = t.id AND filter_assignee.user_id = $${values.length})`);
+      addOperationalAssigneeScope(where, values, filter.assigneeId);
     }
     if (filter.search) {
       values.push(`%${filter.search}%`);
@@ -891,16 +1235,19 @@ export const taskRepository = {
       `${taskSelect()} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY t.created_at DESC`,
       values
     );
-    return enrichTasks(result.rows);
+    return enrichTasks(result.rows, filter.assigneeId);
   },
 
-  findById: async (id: string, user?: AuthScope): Promise<any | null> => {
+  findById: async (id: string, user?: AuthScope, assigneeId?: string): Promise<any | null> => {
     const where = ['t.id = $1'];
     const values: unknown[] = [id];
     addRestrictedProjectAccess(where, values, user, 'p');
+    if (assigneeId) {
+      addOperationalAssigneeScope(where, values, assigneeId);
+    }
     const result = await getPool().query(`${taskSelect()} WHERE ${where.join(' AND ')}`, values);
     if (!result.rowCount) return null;
-    return (await enrichTasks(result.rows))[0];
+    return (await enrichTasks(result.rows, assigneeId))[0];
   },
 
   create: async (data: Omit<DbTask, 'id' | 'created_at' | 'updated_at'> & { assignee_ids?: string[] }): Promise<any> => {
@@ -1065,6 +1412,7 @@ function normalizeRoutine(row: any): any {
     priority: row.priority,
     description: row.description || '',
     createdById: row.created_by,
+    initialStatusId: row.initial_status_id,
     createdAt: toIsoString(row.created_at),
     updatedAt: toIsoString(row.updated_at)
   };
@@ -1073,6 +1421,9 @@ function normalizeRoutine(row: any): any {
 function routineSelect(): string {
   return `SELECT r.*, r.status AS rule_status, source.title, source.description, source.priority,
                  source.project_id, source.created_by, p.client_id, p.name AS project_name, c.name AS client_name,
+                 (SELECT initial_status.id FROM product_statuses initial_status
+                  WHERE initial_status.product_id = p.product_id AND initial_status.active = TRUE
+                  ORDER BY initial_status.position, initial_status.name LIMIT 1) AS initial_status_id,
                  COALESCE((
                    SELECT json_agg(json_build_object('id', u.id, 'name', u.name, 'avatar', u.avatar, 'jobTitle', u.job_title) ORDER BY ta.created_at)
                    FROM task_assignees ta INNER JOIN users u ON u.id = ta.user_id
@@ -1095,10 +1446,11 @@ function advanceRoutineDate(dateValue: string, frequency: string, customInterval
 }
 
 export const routineRepository = {
-  findAll: async (user?: AuthScope): Promise<any[]> => {
+  findAll: async (user?: AuthScope, assigneeId?: string): Promise<any[]> => {
     const where: string[] = [];
     const values: unknown[] = [];
     addRestrictedProjectAccess(where, values, user, 'p');
+    addOperationalAssigneeScope(where, values, assigneeId, 'source');
     const result = await getPool().query(
       `${routineSelect()} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY r.created_at DESC`,
       values
@@ -1184,7 +1536,7 @@ export const routineRepository = {
             description: routine.description,
             responsible_user_id: routine.assignees[0].id,
             assignee_ids: routine.assignees.map((assignee: any) => assignee.id),
-            status: 'A_FAZER',
+            status: routine.initialStatusId,
             priority: routine.priority,
             start_date: nextDate,
             start_time: routine.occurrenceTime || null,

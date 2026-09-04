@@ -1,9 +1,10 @@
-import { RecurrenceRule } from '../types';
+import { OperationalViewMode, RecurrenceRule } from '../types';
 import { api } from './api';
 
 export const routineService = {
-  getAll: async (): Promise<RecurrenceRule[]> => {
-    const response = await api.get<{ success: boolean; routines: RecurrenceRule[] }>('/api/routines');
+  getAll: async (operationalView?: OperationalViewMode): Promise<RecurrenceRule[]> => {
+    const query = operationalView ? `?operationalView=${operationalView}` : '';
+    const response = await api.get<{ success: boolean; routines: RecurrenceRule[] }>(`/api/routines${query}`);
     return response.routines || [];
   },
   update: async (id: string, updates: Partial<RecurrenceRule>): Promise<RecurrenceRule> => {

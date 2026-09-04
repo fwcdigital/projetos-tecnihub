@@ -17,7 +17,7 @@ import { TaskContextPicker } from './TaskContextPicker';
 import { TaskDateRangePicker } from './TaskDateRangePicker';
 import { TaskActionsMenu } from './TaskActionsMenu';
 import { StatusPicker } from './StatusPicker';
-import { TASK_STATUS_OPTIONS } from './visualTokens';
+import { getWorkflowStatusOptions, isTaskCompleted } from './visualTokens';
 
 interface TaskRowProps {
   task: Task;
@@ -39,7 +39,38 @@ export const TaskRow: React.FC<TaskRowProps> = ({
   layout = 'DEFAULT',
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const isCompleted = task.status === 'CONCLUIDO';
+  const isCompleted = isTaskCompleted(task);
+  const statusOptions = getWorkflowStatusOptions(task.workflowStatuses || [], { value: task.status, label: task.statusName, color: task.statusColor });
+  const changeStatus = (status: TaskStatus) => {
+    const definition = task.workflowStatuses?.find(option => option.id === status);
+    onUpdateTask?.({
+      ...task,
+      status,
+      statusName: definition?.name || task.statusName,
+      statusColor: definition?.color || task.statusColor,
+      statusCompleted: definition?.isCompleted ?? task.statusCompleted
+    });
+  };
+  const moveToProject = (project: Project) => {
+    const nextStatus = project.workflowStatuses?.find(status => status.id === task.status)
+      || project.workflowStatuses?.find(status => status.isCompleted === Boolean(task.statusCompleted))
+      || project.workflowStatuses?.[0];
+    onUpdateTask?.({
+      ...task,
+      projectId: project.id,
+      projectName: project.name,
+      clientId: project.clientId,
+      clientName: project.clientName,
+      productId: project.type,
+      workflowStatuses: project.workflowStatuses,
+      ...(nextStatus ? {
+        status: nextStatus.id,
+        statusName: nextStatus.name,
+        statusColor: nextStatus.color,
+        statusCompleted: nextStatus.isCompleted
+      } : {})
+    });
+  };
   const assignees = task.assignees?.length ? task.assignees : [{ id: task.assigneeId, name: task.assigneeName, avatar: task.assigneeAvatar, position: 'Responsável' }];
   const hasChildren = task.subtasks.length > 0 || task.checklist.length > 0;
   
@@ -60,7 +91,7 @@ export const TaskRow: React.FC<TaskRowProps> = ({
       {onUpdateTask && task.availableAssignees?.length ? <AssigneePicker users={task.availableAssignees} selectedIds={task.participantIds} selectedAssignees={assignees} onChange={participantIds => onUpdateTask({ ...task, participantIds })} label="" /> : <AvatarGroup assignees={assignees} />}
     </div>
     <div className="flex-shrink-0" onClick={event => event.stopPropagation()}>
-      <StatusPicker value={task.status} options={TASK_STATUS_OPTIONS} onChange={onUpdateTask ? status => onUpdateTask({ ...task, status: status as TaskStatus }) : undefined} ariaLabel={`Alterar status de ${task.title}`} />
+      <StatusPicker value={task.status} options={statusOptions} onChange={onUpdateTask ? status => changeStatus(status as TaskStatus) : undefined} ariaLabel={`Alterar status de ${task.title}`} />
     </div>
     <TaskActionsMenu task={task} onOpen={() => onSelectTask(task)} onToggleComplete={event => onToggleComplete(task.id, event)} />
   </>;
@@ -104,8 +135,8 @@ export const TaskRow: React.FC<TaskRowProps> = ({
           {/* Client & Project Badges */}
           <div className="flex items-center gap-1.5 flex-wrap min-w-0 flex-shrink">
             {stacked && <PriorityPicker value={task.priority} onChange={onUpdateTask ? priority => onUpdateTask({ ...task, priority }) : undefined} />}
-            <TaskContextPicker task={task} projects={projects} mode="CLIENT" onChange={onUpdateTask ? project => onUpdateTask({ ...task, projectId: project.id, projectName: project.name, clientId: project.clientId, clientName: project.clientName }) : undefined} />
-            <TaskContextPicker task={task} projects={projects} mode="PROJECT" onChange={onUpdateTask ? project => onUpdateTask({ ...task, projectId: project.id, projectName: project.name, clientId: project.clientId, clientName: project.clientName }) : undefined} />
+            <TaskContextPicker task={task} projects={projects} mode="CLIENT" onChange={onUpdateTask ? moveToProject : undefined} />
+            <TaskContextPicker task={task} projects={projects} mode="PROJECT" onChange={onUpdateTask ? moveToProject : undefined} />
             {task.isRecurring && task.recurrence && <RecurrencePopover task={task} onChange={onUpdateTask} />}
             {stacked && <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2.5 sm:gap-3">{controls()}</div>}
           </div>

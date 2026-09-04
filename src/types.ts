@@ -24,6 +24,8 @@ export interface Notification {
 
 export type UserRole = 'ADMIN_PRINCIPAL' | 'ADMIN' | 'GESTOR_PROJETO' | 'COLABORADOR';
 
+export type OperationalViewMode = 'admin' | 'operator';
+
 export interface User {
   id: string;
   name: string;
@@ -42,14 +44,7 @@ export interface User {
 
 export type Priority = 'URGENTE' | 'ALTA' | 'NORMAL' | 'BAIXA';
 
-export type TaskStatus = 
-  | 'BACKLOG'
-  | 'A_FAZER' 
-  | 'EM_ANDAMENTO' 
-  | 'AGUARDANDO_CLIENTE' 
-  | 'EM_REVISAO' 
-  | 'CONCLUIDO' 
-  | 'BLOQUEADO';
+export type TaskStatus = string;
 
 export type ProjectStatus = string;
 
@@ -62,17 +57,30 @@ export interface ProjectStatusDefinition {
   projectsCount: number;
 }
 
-export type ProjectType = 
-  | 'SITE'
-  | 'LANDING_PAGE'
-  | 'ECOMMERCE'
-  | 'GOOGLE_ADS'
-  | 'META_ADS'
-  | 'SEO'
-  | 'SOCIAL_MEDIA'
-  | 'MANUTENCAO'
-  | 'INTERNO'
-  | 'OUTRO';
+export interface ProductDefinition {
+  id: string;
+  name: string;
+  color: string;
+  position: number;
+  active: boolean;
+  projectsCount: number;
+  statusesCount: number;
+  statuses?: ProductStatusDefinition[];
+}
+
+export interface ProductStatusDefinition {
+  id: string;
+  productId: string;
+  name: string;
+  color: string;
+  position: number;
+  active: boolean;
+  isCompleted: boolean;
+  projectsCount: number;
+  tasksCount: number;
+}
+
+export type ProjectType = string;
 
 export type RecurrenceFrequency = 
   | 'NAO_REPETIR'
@@ -129,6 +137,9 @@ export interface Subtask {
   assignees?: Assignee[];
   availableAssignees?: Assignee[];
   status?: TaskStatus;
+  statusName?: string;
+  statusColor?: string;
+  statusCompleted?: boolean;
   priority?: Priority;
   dueDate?: string;
   dueTime?: string;
@@ -179,6 +190,11 @@ export interface Task {
   assignees?: Assignee[];
   priority: Priority;
   status: TaskStatus;
+  statusName?: string;
+  statusColor?: string;
+  statusCompleted?: boolean;
+  workflowStatuses?: ProductStatusDefinition[];
+  productId?: string;
   startDate?: string | null;
   startTime?: string | null;
   dueDate: string; // ISO or YYYY-MM-DD
@@ -242,8 +258,12 @@ export interface Project {
   statusName?: string;
   statusColor?: string;
   statusActive?: boolean;
+  statusCompleted?: boolean;
   priority: Priority;
   type: ProjectType;
+  typeName?: string;
+  typeColor?: string;
+  workflowStatuses?: ProductStatusDefinition[];
   isRecurring: boolean;
   description: string;
   briefing?: Record<string, string>;

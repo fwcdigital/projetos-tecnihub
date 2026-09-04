@@ -1,13 +1,12 @@
 import express, { Router, Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import { projectRepository, projectResourceRepository, projectStatusRepository, clientRepository, userRepository, ProjectStatus, ProjectType, Priority } from '../db.js';
+import { projectRepository, projectResourceRepository, productRepository, productStatusRepository, clientRepository, userRepository, ProjectStatus, ProjectType, Priority } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 import { isUuid } from '../validation.js';
 import { canEditProjectDates, canManageProjectOperations, canManageProjectTeam, isAdministrator } from '../permissions.js';
 
 export const projectRouter = Router();
 
-const PROJECT_TYPES: ProjectType[] = ['WEBSITE', 'LANDING_PAGE', 'ECOMMERCE', 'GOOGLE_ADS', 'META_ADS', 'SEO', 'SOCIAL_MEDIA', 'MAINTENANCE', 'INTERNAL', 'OTHER'];
 const PRIORITIES: Priority[] = ['URGENT', 'HIGH', 'NORMAL', 'LOW'];
 const FILE_TYPES = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
 
@@ -20,6 +19,14 @@ function storageConfig() {
 
 function canManageProject(req: AuthRequest): boolean {
   return canManageProjectOperations(req.user);
+}
+
+function legacyTypeForProduct(productId: string): ProjectType {
+  const mapping: Record<string, ProjectType> = {
+    SITE: 'WEBSITE', LANDING_PAGE: 'LANDING_PAGE', ECOMMERCE: 'ECOMMERCE',
+    PAID_TRAFFIC: 'GOOGLE_ADS', SEO: 'SEO', MAINTENANCE: 'MAINTENANCE', INTERNAL: 'INTERNAL', OTHER: 'OTHER'
+  };
+  return mapping[productId] || 'OTHER';
 }
 
 function encodedStoragePath(path: string): string {
@@ -42,13 +49,16 @@ async function getInvalidTeamMemberId(teamUserIds: unknown): Promise<string | nu
 // GET /api/projects - Listar projetos respeitando RBAC
 projectRouter.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { status, clientId, type, search } = req.query;
+    const { status, clientId, type, search, operationalView } = req.query;
+    if (operationalView && !['admin', 'operator'].includes(String(operationalView))) return res.status(400).json({ error: 'Contexto operacional inválido.' });
+    if (operationalView && !isAdministrator(req.user)) return res.status(403).json({ error: 'O contexto operacional é exclusivo para administradores.' });
 
     const projects = await projectRepository.findAll(req.user, {
       status: status as ProjectStatus,
       clientId: clientId as string,
       type: type as ProjectType,
-      search: search as string
+      search: search as string,
+      assigneeId: operationalView === 'operator' ? req.user!.id : undefined
     });
 
     return res.json({ projects });
@@ -164,7 +174,10 @@ projectRouter.get('/:id', authenticateToken, async (req: AuthRequest, res: Respo
     if (!isUuid(req.params.id)) {
       return res.status(404).json({ error: 'Projeto não encontrado ou você não tem permissão para acessá-lo.' });
     }
-    const project = await projectRepository.findById(req.params.id, req.user);
+    const operationalView = req.query.operationalView;
+    if (operationalView && !['admin', 'operator'].includes(String(operationalView))) return res.status(400).json({ error: 'Contexto operacional inválido.' });
+    if (operationalView && !isAdministrator(req.user)) return res.status(403).json({ error: 'O contexto operacional é exclusivo para administradores.' });
+    const project = await projectRepository.findById(req.params.id, req.user, operationalView === 'operator' ? req.user!.id : undefined);
     if (!project) {
       return res.status(404).json({ error: 'Projeto não encontrado ou você não tem permissão para acessá-lo.' });
     }
@@ -181,7 +194,8 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
       name,
       description,
       client_id,
-      project_type,
+      product_id,
+      product_status_id,
       manager_id,
       status,
       priority,
@@ -222,13 +236,13 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
       return res.status(403).json({ error: 'Somente administradores podem definir as datas estruturais do projeto.' });
     }
 
-    if (project_type && !PROJECT_TYPES.includes(project_type)) {
-      return res.status(400).json({ error: 'Tipo de projeto inválido.' });
-    }
-    const selectedStatus = status ? await projectStatusRepository.findById(String(status)) : await projectStatusRepository.findById('PLANNING');
-    if (!selectedStatus || !selectedStatus.active) {
-      return res.status(400).json({ error: 'Status de projeto inválido.' });
-    }
+    const selectedProduct = product_id ? await productRepository.findById(String(product_id)) : null;
+    if (!selectedProduct || !selectedProduct.active) return res.status(400).json({ error: 'Tipo de projeto inválido ou inativo.' });
+    const requestedStatusId = product_status_id || status;
+    const selectedStatus = requestedStatusId
+      ? await productStatusRepository.findById(selectedProduct.id, String(requestedStatusId))
+      : await productStatusRepository.findFirstActive(selectedProduct.id);
+    if (!selectedStatus || !selectedStatus.active) return res.status(400).json({ error: 'Status incompatível ou inativo para o Tipo selecionado.' });
     if (priority && !PRIORITIES.includes(priority)) {
       return res.status(400).json({ error: 'Prioridade de projeto inválida.' });
     }
@@ -242,9 +256,11 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
       name: name.trim(),
       description: description ? description.trim() : '',
       client_id,
-      project_type: (project_type as ProjectType) || 'WEBSITE',
+      project_type: legacyTypeForProduct(selectedProduct.id),
+      product_id: selectedProduct.id,
+      product_status_id: selectedStatus.id,
       manager_id: chosenManagerId,
-      status: (status as ProjectStatus) || 'PLANNING',
+      status: 'PLANNING' as ProjectStatus,
       priority: (priority as Priority) || 'NORMAL',
       start_date: start_date || null,
       due_date: due_date || undefined,
@@ -287,7 +303,8 @@ projectRouter.put('/:id', authenticateToken, async (req: AuthRequest, res: Respo
       name,
       description,
       client_id,
-      project_type,
+      product_id,
+      product_status_id,
       manager_id,
       status,
       priority,
@@ -327,14 +344,19 @@ projectRouter.put('/:id', authenticateToken, async (req: AuthRequest, res: Respo
       }
     }
 
-    if (project_type && !PROJECT_TYPES.includes(project_type)) {
-      return res.status(400).json({ error: 'Tipo de projeto inválido.' });
+    const targetProductId = String(product_id || existing.productId);
+    const selectedProduct = await productRepository.findById(targetProductId);
+    if (!selectedProduct || (!selectedProduct.active && targetProductId !== existing.productId)) {
+      return res.status(400).json({ error: 'Tipo de projeto inválido ou inativo.' });
     }
-    if (status) {
-      const selectedStatus = await projectStatusRepository.findById(String(status));
-      if (!selectedStatus || (!selectedStatus.active && status !== existing.status)) {
-        return res.status(400).json({ error: 'Status de projeto inválido ou inativo.' });
-      }
+    const requestedStatusId = product_status_id || status;
+    if (product_id && targetProductId !== existing.productId && !requestedStatusId) {
+      return res.status(400).json({ error: 'A troca de Tipo exige um novo Status compatível.' });
+    }
+    const targetStatusId = String(requestedStatusId || existing.projectStatusId);
+    const selectedStatus = await productStatusRepository.findById(targetProductId, targetStatusId);
+    if (!selectedStatus || (!selectedStatus.active && targetStatusId !== existing.projectStatusId)) {
+      return res.status(400).json({ error: 'Status incompatível ou inativo para o Tipo selecionado.' });
     }
     if (priority && !PRIORITIES.includes(priority)) {
       return res.status(400).json({ error: 'Prioridade de projeto inválida.' });
@@ -349,9 +371,12 @@ projectRouter.put('/:id', authenticateToken, async (req: AuthRequest, res: Respo
     if (name) updates.name = name.trim();
     if (description !== undefined) updates.description = description.trim();
     if (client_id) updates.client_id = client_id;
-    if (project_type) updates.project_type = project_type;
+    if (product_id) {
+      updates.product_id = targetProductId;
+      updates.project_type = legacyTypeForProduct(targetProductId);
+    }
     if (manager_id) updates.manager_id = manager_id;
-    if (status) updates.status = status;
+    if (requestedStatusId) updates.product_status_id = targetStatusId;
     if (priority) updates.priority = priority;
     if (start_date !== undefined) updates.start_date = start_date;
     if (due_date !== undefined) updates.due_date = due_date;

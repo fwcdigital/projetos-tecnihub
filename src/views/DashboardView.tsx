@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Client, Project, ProjectStatusDefinition, Task, User } from '../types';
+import { Client, OperationalViewMode, Project, ProjectStatusDefinition, Task, User } from '../types';
 import { TaskRow } from '../components/TaskRow';
 import { CompletedTasksSection } from '../components/CompletedTasksSection';
 import { 
@@ -10,29 +10,18 @@ import {
   CheckCircle2, 
   ArrowUpRight, 
   Clock, 
-  Repeat, 
-  Sparkles,
-  TrendingUp,
-  Building2,
-  Users,
   Plus,
   ChevronDown,
   ChevronUp,
   ListPlus,
-  Loader2,
-  Calendar,
-  PanelRightClose,
-  PanelRightOpen
+  Loader2
 } from 'lucide-react';
-import { isClosedProjectStatus } from '../services/projectStatusService';
-import { UserAvatar } from '../components/UserAvatar';
-import { PriorityPicker } from '../components/PriorityPicker';
-import { StatusPicker } from '../components/StatusPicker';
-import { getProjectStatusOptions } from '../components/visualTokens';
-import { canManageProjectOperations } from '../permissions';
+import { isProjectCompleted } from '../components/visualTokens';
+import { GroupedSections, GroupingSwitcher, groupTasks, usePersistentGrouping } from '../components/GroupingSwitcher';
 
 interface DashboardViewProps {
   currentUser: User;
+  operationalView: OperationalViewMode;
   tasks: Task[];
   completedTasks: Task[];
   projects: Project[];
@@ -50,6 +39,7 @@ interface DashboardViewProps {
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   currentUser,
+  operationalView,
   tasks,
   completedTasks,
   projects,
@@ -64,7 +54,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenNewProject,
   onUpdateProject
 }) => {
-  const canManageProjects = canManageProjectOperations(currentUser.role);
   const dateKey = (date: Date) => {
     const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
     return local.toISOString().slice(0, 10);
@@ -82,26 +71,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Load more / Expand upcoming tasks state
   const [showMoreUpcoming, setShowMoreUpcoming] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [grouping, setGrouping] = usePersistentGrouping('dashboard.groupBy', 'date');
 
   // Overdue Tasks
-  const overdueTasks = tasks.filter(t => t.dueDate < todayStr && t.status !== 'CONCLUIDO');
+  const overdueTasks = tasks.filter(t => t.dueDate < todayStr && !t.statusCompleted);
   // Today Tasks
-  const todayTasks = tasks.filter(t => t.dueDate === todayStr && t.status !== 'CONCLUIDO');
+  const todayTasks = tasks.filter(t => t.dueDate === todayStr && !t.statusCompleted);
   // Tomorrow Tasks
   const tomorrowTasks = tasks.filter(t => t.dueDate === tomorrowKey);
   const day03Tasks = tasks.filter(t => t.dueDate === dayAfterTomorrowKey);
   const day04Tasks = tasks.filter(t => t.dueDate === thirdDayKey);
   // Next Days Tasks
   const nextDaysTasks = tasks.filter(t => t.dueDate > thirdDayKey);
+  const allNextDaysTasks = tasks.filter(t => t.dueDate > tomorrowKey);
   
   // Total future tasks beyond tomorrow
   const futureTasksCount = day03Tasks.length + day04Tasks.length + nextDaysTasks.length;
 
   // Upcoming Next 7 Days
-  const upcomingTasks = tasks.filter(t => t.dueDate > todayStr && t.dueDate <= dateKey(addDays(7)) && t.status !== 'CONCLUIDO');
+  const upcomingTasks = tasks.filter(t => t.dueDate > todayStr && t.dueDate <= dateKey(addDays(7)) && !t.statusCompleted);
   // Active Projects
-  const activeProjects = projects.filter(project => !isClosedProjectStatus(project.status));
+  const activeProjects = projects.filter(project => !isProjectCompleted(project));
+  const renderGroupedRows = (items: Task[]) => <GroupedSections groups={groupTasks(items, grouping, projects)} renderItem={task => <TaskRow key={task.id} task={task} onSelectTask={onSelectTask} onToggleComplete={onToggleComplete} onUpdateTask={onUpdateTask} projects={projects} layout="STACKED" />} />;
   const handleToggleLoadMore = () => {
     if (!showMoreUpcoming) {
       setIsLoadingMore(true);
@@ -248,10 +239,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Main Grid: Left Operational Focus & Right Agency Pulse */}
-      <div className={`grid grid-cols-1 gap-6 ${sidebarCollapsed ? 'lg:grid-cols-[minmax(0,1fr)_48px]' : 'lg:grid-cols-3'}`}>
-        {/* Left 2 Cols: Demandas Críticas e Hoje */}
-        <div className={`min-w-0 space-y-6 ${sidebarCollapsed ? '' : 'lg:col-span-2'}`}>
+      <div className="flex items-center justify-end border-b border-zinc-800/80 pb-3">
+        <GroupingSwitcher value={grouping} onChange={setGrouping} />
+      </div>
+
+      <div className="min-w-0 space-y-6">
           {/* Section: Atrasadas */}
           {overdueTasks.length > 0 && (
             <div className="space-y-2.5">
@@ -262,22 +254,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     Atrasadas ({overdueTasks.length})
                   </h2>
                 </div>
-                <span className="text-[11px] text-rose-400/80">Prioridade imediata</span>
               </div>
 
-              <div className="space-y-2">
-                {overdueTasks.map((task) => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    onSelectTask={onSelectTask}
-                    onToggleComplete={onToggleComplete}
-                    onUpdateTask={onUpdateTask}
-                    projects={projects}
-                    layout="STACKED"
-                  />
-                ))}
-              </div>
+              {renderGroupedRows(overdueTasks)}
             </div>
           )}
 
@@ -290,28 +269,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   Programadas Para Hoje ({todayTasks.length})
                 </h2>
               </div>
-              <button
-                onClick={() => onNavigate('MEU_TRABALHO')}
-                className="text-[11px] text-zinc-400 hover:text-white flex items-center gap-1 transition-colors"
-              >
-                <span>Ver cronograma completo</span>
-                <ArrowUpRight size={12} />
-              </button>
             </div>
 
-            <div className="space-y-2">
-              {todayTasks.map((task) => (
-                <TaskRow
-                  key={task.id}
-                  task={task}
-                  onSelectTask={onSelectTask}
-                  onToggleComplete={onToggleComplete}
-                  onUpdateTask={onUpdateTask}
-                  projects={projects}
-                  layout="STACKED"
-                />
-              ))}
-            </div>
+            {renderGroupedRows(todayTasks)}
           </div>
 
           {/* Section: Amanhã */}
@@ -325,110 +285,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
             </div>
 
-            <div className="space-y-2">
-              {tomorrowTasks.map((task) => (
-                <TaskRow
-                  key={task.id}
-                  task={task}
-                  onSelectTask={onSelectTask}
-                  onToggleComplete={onToggleComplete}
-                  onUpdateTask={onUpdateTask}
-                  projects={projects}
-                  layout="STACKED"
-                />
-              ))}
-            </div>
+            {renderGroupedRows(tomorrowTasks)}
           </div>
 
           {/* Expandable Next Tasks Sections */}
+          <div className="flex items-center justify-between"><div className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-purple-400" /><h2 className="text-xs font-bold uppercase tracking-wider text-purple-300">Próximos Dias ({allNextDaysTasks.length})</h2></div></div>
           {showMoreUpcoming && (
-            <div className="space-y-6 pt-2 animate-in fade-in slide-in-from-top-3 duration-200">
-              {/* Section: 03 de Setembro */}
-              {day03Tasks.length > 0 && (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-indigo-400" />
-                      <h2 className="text-xs font-bold uppercase tracking-wider text-indigo-300">
-                        {dateLabel(dayAfterTomorrowDate)}
-                      </h2>
-                    </div>
-                    <span className="text-[10px] text-zinc-500 font-mono">{day03Tasks.length} {day03Tasks.length === 1 ? 'tarefa' : 'tarefas'}</span>
-                  </div>
-
-                  <div className="space-y-2">
-                    {day03Tasks.map((task) => (
-                      <TaskRow
-                        key={task.id}
-                        task={task}
-                        onSelectTask={onSelectTask}
-                        onToggleComplete={onToggleComplete}
-                        onUpdateTask={onUpdateTask}
-                        projects={projects}
-                        layout="STACKED"
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Section: 04 de Setembro */}
-              {day04Tasks.length > 0 && (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-violet-400" />
-                      <h2 className="text-xs font-bold uppercase tracking-wider text-violet-300">
-                        {dateLabel(thirdDayDate)}
-                      </h2>
-                    </div>
-                    <span className="text-[10px] text-zinc-500 font-mono">{day04Tasks.length} {day04Tasks.length === 1 ? 'tarefa' : 'tarefas'}</span>
-                  </div>
-
-                  <div className="space-y-2">
-                    {day04Tasks.map((task) => (
-                      <TaskRow
-                        key={task.id}
-                        task={task}
-                        onSelectTask={onSelectTask}
-                        onToggleComplete={onToggleComplete}
-                        onUpdateTask={onUpdateTask}
-                        projects={projects}
-                        layout="STACKED"
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Section: Próximos Dias */}
-              {nextDaysTasks.length > 0 && (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-purple-400" />
-                      <h2 className="text-xs font-bold uppercase tracking-wider text-purple-300">
-                        Próximos Dias (Semana seguinte)
-                      </h2>
-                    </div>
-                    <span className="text-[10px] text-zinc-500 font-mono">{nextDaysTasks.length} {nextDaysTasks.length === 1 ? 'tarefa' : 'tarefas'}</span>
-                  </div>
-
-                  <div className="space-y-2">
-                    {nextDaysTasks.map((task) => (
-                      <TaskRow
-                        key={task.id}
-                        task={task}
-                        onSelectTask={onSelectTask}
-                        onToggleComplete={onToggleComplete}
-                        onUpdateTask={onUpdateTask}
-                        projects={projects}
-                        layout="STACKED"
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
+            <div className="space-y-3 pt-2 animate-in fade-in slide-in-from-top-3 duration-200">
+              {renderGroupedRows(allNextDaysTasks)}
             </div>
           )}
 
@@ -493,157 +357,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             contextKey="dashboard"
             taskLayout="STACKED"
           />
-        </div>
-
-        {/* Right 1 Col: Status dos Projetos e Recorrências */}
-        <div className={sidebarCollapsed ? 'flex items-start justify-end' : 'space-y-6'}>
-          {sidebarCollapsed ? (
-            <button type="button" onClick={() => setSidebarCollapsed(false)} className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-800 bg-[#121216] text-zinc-400 transition-colors hover:border-zinc-600 hover:text-white" title="Expandir painel lateral" aria-label="Expandir painel lateral"><PanelRightOpen size={16} /></button>
-          ) : <>
-          <div className="flex justify-end">
-            <button type="button" onClick={() => setSidebarCollapsed(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-[#121216] px-2.5 py-1.5 text-[10px] font-semibold text-zinc-400 transition-colors hover:border-zinc-600 hover:text-white" title="Minimizar painel lateral"><PanelRightClose size={13} />Minimizar painel</button>
-          </div>
-          {/* Projetos em Andamento Card */}
-          <div className="p-4 rounded-2xl bg-[#121216] border border-zinc-800 space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
-              <div className="flex items-center gap-2">
-                <FolderKanban size={15} className="text-sky-400" />
-                <h3 className="text-xs font-bold text-zinc-200 uppercase tracking-wider">
-                  Andamento dos Projetos
-                </h3>
-              </div>
-              <button 
-                onClick={() => onNavigate('PROJETOS')}
-                className="text-[11px] text-zinc-400 hover:text-white"
-              >
-                Ver todos ({projects.length})
-              </button>
-            </div>
-
-            <div className="space-y-3.5">
-              {projects.slice(0, 4).map((proj) => (
-                <div key={proj.id} className="space-y-1.5 text-xs">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 truncate max-w-[190px]">
-                      <span className="font-semibold text-zinc-200 truncate">{proj.name}</span>
-                    </div>
-                    <span className="text-[11px] font-mono font-bold text-zinc-300">{proj.progress}%</span>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <PriorityPicker value={proj.priority} onChange={canManageProjects ? priority => void onUpdateProject(proj, { priority }) : undefined} />
-                    <StatusPicker value={proj.status} options={getProjectStatusOptions(projectStatuses, { value: proj.status, label: proj.statusName, color: proj.statusColor })} onChange={canManageProjects ? status => void onUpdateProject(proj, { status }) : undefined} ariaLabel={`Alterar status de ${proj.name}`} />
-                  </div>
-
-                  <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full transition-all duration-500 rounded-full ${
-                        proj.progress >= 80 ? 'bg-emerald-500' : proj.progress >= 50 ? 'bg-sky-500' : 'bg-amber-500'
-                      }`}
-                      style={{ width: `${proj.progress}%` }}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between text-[10px] text-zinc-400 pt-0.5">
-                    <span className="flex items-center gap-1"><UserAvatar name={proj.managerName} src={proj.managerAvatar} className="w-4 h-4" />{proj.clientName} • {proj.managerName.split(' ')[0]}</span>
-                    <span>Prazo: {proj.dueDate.split('-').reverse().slice(0, 2).join('/')}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Recorrências Fixas da Semana */}
-          <div className="p-4 rounded-2xl bg-[#121216] border border-zinc-800 space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
-              <div className="flex items-center gap-2">
-                <Repeat size={15} className="text-emerald-400" />
-                <h3 className="text-xs font-bold text-zinc-200 uppercase tracking-wider">
-                  Rotinas & Recorrências
-                </h3>
-              </div>
-              <button 
-                onClick={() => onNavigate('RECORRENCIAS')}
-                className="text-[11px] text-emerald-400 hover:underline"
-              >
-                Gerenciar
-              </button>
-            </div>
-
-            <div className="space-y-2.5 text-xs">
-              <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800 flex items-start justify-between gap-2">
-                <div>
-                  <p className="font-semibold text-zinc-200">Gestão Google Ads</p>
-                  <p className="text-[11px] text-zinc-400">Clínica Horizonte • Toda seg 09h</p>
-                  <span className="text-[10px] text-zinc-500">Resp: Caio Rocha</span>
-                </div>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  Semanal
-                </span>
-              </div>
-
-              <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800 flex items-start justify-between gap-2">
-                <div>
-                  <p className="font-semibold text-zinc-200">Relatório Mensal</p>
-                  <p className="text-[11px] text-zinc-400">Advocacia Martins • Todo dia 05</p>
-                  <span className="text-[10px] text-zinc-500">Resp: Caio Rocha</span>
-                </div>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">
-                  Mensal
-                </span>
-              </div>
-
-              <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800 flex items-start justify-between gap-2">
-                <div>
-                  <p className="font-semibold text-zinc-200">Backup & Update WordPress</p>
-                  <p className="text-[11px] text-zinc-400">Indústria Atlas • Quinzenal</p>
-                  <span className="text-[10px] text-zinc-500">Resp: Gabriel Menezes</span>
-                </div>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                  Quinzenal
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Equipe Online / Disponibilidade */}
-          <div className="p-4 rounded-2xl bg-[#121216] border border-zinc-800 space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
-              <div className="flex items-center gap-2">
-                <Users size={15} className="text-amber-400" />
-                <h3 className="text-xs font-bold text-zinc-200 uppercase tracking-wider">
-                  Equipe & Carga
-                </h3>
-              </div>
-              <button 
-                onClick={() => onNavigate('EQUIPE')}
-                className="text-[11px] text-zinc-400 hover:text-white"
-              >
-                Ver equipe
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              {users.map(u => (
-                <div key={u.id} className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <div className="relative">
-                      <img src={u.avatar} alt={u.name} className="w-6 h-6 rounded-full object-cover border border-zinc-700" />
-                      <span className={`absolute bottom-0 right-0 w-1.5 h-1.5 rounded-full border border-black ${
-                        u.status === 'ONLINE' ? 'bg-emerald-400' : u.status === 'FOCO' ? 'bg-purple-400' : 'bg-amber-400'
-                      }`} />
-                    </div>
-                    <span className="font-medium text-zinc-300">{u.name}</span>
-                  </div>
-                  <span className="text-[11px] text-zinc-400 font-mono">
-                    {u.currentTasksCount} tarefas
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-          </>}
-        </div>
       </div>
 
     </div>

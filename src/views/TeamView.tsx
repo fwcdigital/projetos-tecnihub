@@ -43,10 +43,11 @@ export const TeamView: React.FC<TeamViewProps> = ({
     if (refreshed && refreshed !== selectedUser) setSelectedUser(refreshed);
   }, [selectedUser, users]);
 
-  const userTasks = tasks.filter(t => t.assigneeId === selectedUser.id);
-  const userCompletedTasks = completedTasks.filter(t => t.assigneeId === selectedUser.id);
-  const overdueCount = userTasks.filter(t => t.dueDate < today && t.status !== 'CONCLUIDO').length;
-  const todayCount = userTasks.filter(t => t.dueDate === today && t.status !== 'CONCLUIDO').length;
+  const isAssignedTo = (task: Task, userId: string) => task.assignees?.some(assignee => assignee.id === userId) || task.participantIds.includes(userId);
+  const userTasks = tasks.filter(t => isAssignedTo(t, selectedUser.id));
+  const userCompletedTasks = completedTasks.filter(t => isAssignedTo(t, selectedUser.id));
+  const overdueCount = userTasks.filter(t => t.dueDate < today && !t.statusCompleted).length;
+  const todayCount = userTasks.filter(t => t.dueDate === today && !t.statusCompleted).length;
 
   return (
     <div className="mx-auto max-w-[1800px] space-y-6 p-4 animate-in fade-in duration-150 sm:p-6">
@@ -72,7 +73,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         {users.map(user => {
           const isSelected = selectedUser.id === user.id;
-          const userTaskTotal = tasks.filter(t => t.assigneeId === user.id && t.status !== 'CONCLUIDO').length;
+          const userTaskTotal = tasks.filter(t => isAssignedTo(t, user.id) && !t.statusCompleted).length;
 
           return (
             <div

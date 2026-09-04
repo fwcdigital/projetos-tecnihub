@@ -2,8 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { ArrowRight, Building2, Mail, Plus, Search, User as UserIcon } from 'lucide-react';
 import { Client, Project, Task } from '../types';
 import { ViewMode, ViewModeSwitcher } from '../components/ViewModeSwitcher';
-import { isClosedProjectStatus } from '../services/projectStatusService';
 import { StatusBadge } from '../components/StatusBadge';
+import { isProjectCompleted } from '../components/visualTokens';
 
 interface ClientsViewProps {
   clients: Client[];
@@ -29,8 +29,8 @@ export const ClientsView: React.FC<ClientsViewProps> = ({ clients, projects, tas
     const term = searchTerm.trim().toLocaleLowerCase('pt-BR');
     return !term || `${client.name} ${client.company} ${client.contactName} ${client.leadManagerName}`.toLocaleLowerCase('pt-BR').includes(term);
   });
-  const activeProjects = (client: Client) => projects.filter(project => project.clientId === client.id && !isClosedProjectStatus(project.status)).length;
-  const openTasks = (client: Client) => tasks.filter(task => task.clientId === client.id && task.status !== 'CONCLUIDO').length;
+  const activeProjects = (client: Client) => projects.filter(project => project.clientId === client.id && !isProjectCompleted(project)).length;
+  const openTasks = (client: Client) => tasks.filter(task => task.clientId === client.id && !task.statusCompleted).length;
 
   return (
     <div className="mx-auto max-w-[1800px] space-y-4 p-4 sm:p-6">

@@ -87,7 +87,42 @@ test('migrations criam o núcleo e tarefas no PostgreSQL com integridade e RLS',
     );
     assert.deepEqual(
       tables.rows.map(row => row.table_name),
-      ['checklist_items', 'clients', 'project_members', 'project_resources', 'project_statuses', 'projects', 'recurrence_rules', 'schema_migrations', 'task_assignees', 'task_comments', 'tasks', 'users']
+      ['checklist_items', 'clients', 'product_statuses', 'products', 'project_members', 'project_resources', 'project_statuses', 'projects', 'recurrence_rules', 'schema_migrations', 'task_assignees', 'task_comments', 'tasks', 'users']
+    );
+
+    const products = await database.query<{ id: string; name: string; position: number }>(
+      'SELECT id, name, position FROM products ORDER BY position'
+    );
+    assert.deepEqual(products.rows.map(product => product.name), [
+      'Site', 'Landing Page', 'E-commerce', 'Tráfego Pago', 'SEO', 'Manutenção', 'Interno', 'Outro'
+    ]);
+
+    const productStatusCounts = await database.query<{ product_id: string; total: number }>(
+      `SELECT product_id, COUNT(*)::integer AS total
+       FROM product_statuses
+       GROUP BY product_id`
+    );
+    assert.deepEqual(
+      Object.fromEntries(productStatusCounts.rows.map(row => [row.product_id, Number(row.total)])),
+      { SITE: 10, LANDING_PAGE: 10, ECOMMERCE: 12, PAID_TRAFFIC: 9, SEO: 8, MAINTENANCE: 7, INTERNAL: 6, OTHER: 7 }
+    );
+
+    const mappedProject = await database.query<{ product_id: string }>('SELECT product_id FROM projects WHERE id = $1', [projectId]);
+    assert.equal(mappedProject.rows[0].product_id, 'SITE');
+    const paidTrafficProjectId = '20000000-0000-4000-8000-000000000002';
+    await database.query(
+      `INSERT INTO projects (id, client_id, name, project_type, manager_id, created_by)
+       VALUES ($1, $2, 'Google Ads legado', 'GOOGLE_ADS', $3, $3)`,
+      [paidTrafficProjectId, clientId, managerId]
+    );
+    assert.equal(
+      (await database.query<{ product_id: string }>('SELECT product_id FROM projects WHERE id = $1', [paidTrafficProjectId])).rows[0].product_id,
+      'PAID_TRAFFIC'
+    );
+    await database.query("UPDATE projects SET product_status_id = 'SITE_PLANNING' WHERE id = $1", [projectId]);
+    await assert.rejects(
+      database.query("UPDATE projects SET product_status_id = 'SEO_PLANNING' WHERE id = $1", [projectId]),
+      /foreign key/i
     );
 
     const taskColumns = await database.query<{ column_name: string }>(
@@ -96,12 +131,35 @@ test('migrations criam o núcleo e tarefas no PostgreSQL com integridade e RLS',
     );
     assert.deepEqual(new Set(taskColumns.rows.map(row => row.column_name)), new Set(['start_date', 'start_time', 'due_date', 'due_time']));
 
+    const legacyTaskId = '30000000-0000-4000-8000-000000000001';
+    await database.query(
+      `INSERT INTO tasks (id, project_id, title, responsible_user_id, status, due_date, created_by)
+       VALUES ($1, $2, 'Tarefa legada', $3, 'A_FAZER', '2026-09-10', $3)`,
+      [legacyTaskId, projectId, collaboratorId]
+    );
+    assert.equal(
+      (await database.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [legacyTaskId])).rows[0].status,
+      'SITE_PLANNING'
+    );
+    await assert.rejects(
+      database.query(
+        `INSERT INTO tasks (project_id, title, responsible_user_id, status, due_date, created_by)
+         VALUES ($1, 'Status incompatível', $2, 'SEO_AUDIT', '2026-09-10', $2)`,
+        [projectId, collaboratorId]
+      ),
+      /incompatível|constraint/i
+    );
+    const completedStatuses = await database.query<{ total: number }>(
+      'SELECT COUNT(*)::integer AS total FROM product_statuses WHERE is_completed = TRUE'
+    );
+    assert.equal(Number(completedStatuses.rows[0].total), 8);
+
     const rls = await database.query<{ relname: string; relrowsecurity: boolean }>(
       `SELECT relname, relrowsecurity
        FROM pg_class
-       WHERE relname IN ('users', 'clients', 'projects', 'project_members', 'project_statuses', 'tasks', 'task_assignees', 'task_comments', 'checklist_items', 'project_resources', 'recurrence_rules')`
+       WHERE relname IN ('users', 'clients', 'products', 'product_statuses', 'projects', 'project_members', 'project_statuses', 'tasks', 'task_assignees', 'task_comments', 'checklist_items', 'project_resources', 'recurrence_rules')`
     );
-    assert.equal(rls.rows.length, 11);
+    assert.equal(rls.rows.length, 13);
     assert.ok(rls.rows.every(row => row.relrowsecurity));
   } finally {
     await database.close();

@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, Loader2, Pencil, X } from 'lucide-react';
-import { Client, Project, ProjectStatusDefinition, ProjectType, User } from '../types';
+import { Client, ProductDefinition, Project, ProjectType, User } from '../types';
 import { UserAvatar } from './UserAvatar';
 import { DateTimePicker } from './DateTimePicker';
 import { canEditProjectDates, canManageProjectOperations, isAdministrator } from '../permissions';
 import { PriorityPicker } from './PriorityPicker';
 import { StatusPicker } from './StatusPicker';
-import { getProjectStatusOptions } from './visualTokens';
+import { getWorkflowStatusOptions } from './visualTokens';
 
 interface Props {
   isOpen: boolean;
@@ -16,10 +16,10 @@ interface Props {
   clients: Client[];
   users: User[];
   currentUser: User;
-  projectStatuses: ProjectStatusDefinition[];
+  products: ProductDefinition[];
 }
 
-export const EditProjectModal: React.FC<Props> = ({ isOpen, onClose, onSave, project, clients, users, currentUser, projectStatuses }) => {
+export const EditProjectModal: React.FC<Props> = ({ isOpen, onClose, onSave, project, clients, users, currentUser, products }) => {
   const [form, setForm] = useState<Partial<Project>>({});
   const [teamIds, setTeamIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -39,9 +39,16 @@ export const EditProjectModal: React.FC<Props> = ({ isOpen, onClose, onSave, pro
 
   if (!isOpen) return null;
   const manager = users.find(user => user.id === form.managerId);
-  const statusOptions = getProjectStatusOptions(projectStatuses, { value: form.status || project.status, label: project.statusName, color: project.statusColor });
+  const selectedProduct = products.find(product => product.id === form.type)
+    || products.find(product => product.id === project.type)
+    || ({ id: project.type, name: project.typeName || project.type, color: project.typeColor || '#71717a', position: 0, active: false, projectsCount: 1, statusesCount: project.workflowStatuses?.length || 0, statuses: project.workflowStatuses || [] });
+  const statusOptions = getWorkflowStatusOptions(selectedProduct?.statuses || [], { value: form.status || project.status, label: project.statusName, color: project.statusColor });
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (!selectedProduct || !selectedProduct.statuses?.some(status => status.id === form.status)) {
+      setError('Selecione um Status compatível com o Tipo do projeto.');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -71,7 +78,7 @@ export const EditProjectModal: React.FC<Props> = ({ isOpen, onClose, onSave, pro
         <label className="text-zinc-400 block">Descrição<textarea rows={3} value={form.description || ''} onChange={event => set('description', event.target.value)} className="mt-1 w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 resize-none" /></label>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <label className="text-zinc-400">Status<span className="mt-2 block"><StatusPicker value={form.status || project.status} options={statusOptions} onChange={value => set('status', value)} ariaLabel="Status do projeto" /></span></label>
-          <label className="text-zinc-400">Tipo<select value={form.type} onChange={event => set('type', event.target.value as ProjectType)} className="mt-1 w-full rounded-xl border border-zinc-700 bg-[#181820] p-2 text-zinc-200"><option value="SITE">Site</option><option value="LANDING_PAGE">Landing Page</option><option value="ECOMMERCE">E-commerce</option><option value="GOOGLE_ADS">Google Ads</option><option value="META_ADS">Meta Ads</option><option value="SEO">SEO</option><option value="SOCIAL_MEDIA">Social Media</option><option value="MANUTENCAO">Manutenção</option><option value="INTERNO">Interno</option><option value="OUTRO">Outro</option></select></label>
+          <label className="text-zinc-400">Tipo<select value={form.type} onChange={event => { const product = products.find(option => option.id === event.target.value); setForm(previous => ({ ...previous, type: event.target.value as ProjectType, status: product?.statuses?.[0]?.id || '' })); }} className="mt-1 w-full rounded-xl border border-zinc-700 bg-[#181820] p-2 text-zinc-200">{!products.some(product => product.id === project.type) && <option value={project.type}>{project.typeName || project.type} (inativo)</option>}{products.filter(product => product.active || product.id === project.type).map(product => <option key={product.id} value={product.id}>{product.name}{product.active ? '' : ' (inativo)'}</option>)}</select></label>
           <label className="text-zinc-400">Prioridade<span className="mt-2 block"><PriorityPicker value={form.priority || project.priority} onChange={value => set('priority', value)} /></span></label>
           <label className="text-zinc-400">Progresso<input type="number" min="0" max="100" value={form.progress || 0} onChange={event => set('progress', Number(event.target.value))} className="mt-1 w-full rounded-xl border border-zinc-700 bg-[#181820] p-2 text-zinc-200" /></label>
         </div>

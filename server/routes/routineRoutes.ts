@@ -2,12 +2,16 @@ import { Router, Response } from 'express';
 import { AuthRequest, authenticateToken } from '../auth.js';
 import { routineRepository } from '../db.js';
 import { isUuid } from '../validation.js';
+import { isAdministrator } from '../permissions.js';
 
 export const routineRouter = Router();
 
 routineRouter.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const routines = await routineRepository.findAll(req.user);
+    const operationalView = req.query.operationalView;
+    if (operationalView && !['admin', 'operator'].includes(String(operationalView))) return res.status(400).json({ error: 'Contexto operacional inválido.' });
+    if (operationalView && !isAdministrator(req.user)) return res.status(403).json({ error: 'O contexto operacional é exclusivo para administradores.' });
+    const routines = await routineRepository.findAll(req.user, operationalView === 'operator' ? req.user!.id : undefined);
     return res.json({ success: true, routines });
   } catch (error) {
     console.error('Erro ao listar rotinas:', error);

@@ -28,6 +28,10 @@ export function canAdministerProjectStatuses(actor: Actor): boolean {
   return isAdministrator(actor);
 }
 
+export function canAdministerProducts(actor: Actor): boolean {
+  return isAdministrator(actor);
+}
+
 export function canManageUsers(actor: Actor): boolean {
   return isAdministrator(actor);
 }

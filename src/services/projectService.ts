@@ -1,39 +1,13 @@
 import { api, getStoredToken } from './api';
-import { Project, ProjectResource, ProjectStatus, ProjectType, Priority } from '../types';
-import { projectStatusToBackend, projectStatusToFrontend } from './projectStatusService';
+import { OperationalViewMode, ProductStatusDefinition, Project, ProjectResource, ProjectStatus, ProjectType, Priority } from '../types';
 
 export interface ProjectFilter {
   status?: string;
   clientId?: string;
   type?: string;
   search?: string;
+  operationalView?: OperationalViewMode;
 }
-
-const typeMapToFrontend: Record<string, ProjectType> = {
-  WEBSITE: 'SITE',
-  LANDING_PAGE: 'LANDING_PAGE',
-  ECOMMERCE: 'ECOMMERCE',
-  GOOGLE_ADS: 'GOOGLE_ADS',
-  META_ADS: 'META_ADS',
-  SEO: 'SEO',
-  SOCIAL_MEDIA: 'SOCIAL_MEDIA',
-  MAINTENANCE: 'MANUTENCAO',
-  INTERNAL: 'INTERNO',
-  OTHER: 'OUTRO'
-};
-
-const typeMapToBackend: Record<string, string> = {
-  SITE: 'WEBSITE',
-  LANDING_PAGE: 'LANDING_PAGE',
-  ECOMMERCE: 'ECOMMERCE',
-  GOOGLE_ADS: 'GOOGLE_ADS',
-  META_ADS: 'META_ADS',
-  SEO: 'SEO',
-  SOCIAL_MEDIA: 'SOCIAL_MEDIA',
-  MANUTENCAO: 'MAINTENANCE',
-  INTERNO: 'INTERNAL',
-  OUTRO: 'OTHER'
-};
 
 const priorityMapToFrontend: Record<string, Priority> = {
   URGENT: 'URGENTE',
@@ -73,12 +47,22 @@ function formatProjectFromBackend(p: any): Project {
     startDate: p.start_date || p.startDate || '',
     dueDate: p.due_date || p.dueDate || '',
     progress: p.progress || 0,
-    status: projectStatusToFrontend(p.status) as ProjectStatus,
+    status: (p.projectStatusId || p.product_status_id) as ProjectStatus,
     statusName: p.projectStatusName || p.project_status_name,
     statusColor: p.projectStatusColor || p.project_status_color,
     statusActive: p.projectStatusActive ?? p.project_status_active ?? true,
+    statusCompleted: Boolean(p.projectStatusCompleted ?? p.project_status_completed),
     priority: priorityMapToFrontend[p.priority] || (p.priority as Priority) || 'NORMAL',
-    type: typeMapToFrontend[p.project_type] || (p.type as ProjectType) || 'SITE',
+    type: (p.productId || p.product_id) as ProjectType,
+    typeName: p.productName || p.product_name || p.productId || p.product_id,
+    typeColor: p.productColor || p.product_color,
+    workflowStatuses: (p.workflowStatuses || p.workflow_statuses || []).map((status: any): ProductStatusDefinition => ({
+      id: status.id, productId: status.productId || status.product_id, name: status.name, color: status.color,
+      position: Number(status.position), active: Boolean(status.active),
+      isCompleted: Boolean(status.isCompleted ?? status.is_completed),
+      projectsCount: Number(status.projectsCount ?? status.projects_count ?? 0),
+      tasksCount: Number(status.tasksCount ?? status.tasks_count ?? 0)
+    })),
     isRecurring: Boolean(p.is_recurring ?? p.isRecurring),
     description: p.description || '',
     briefing: p.briefing && typeof p.briefing === 'object' ? p.briefing : {},
@@ -92,27 +76,27 @@ export const projectService = {
   getAll: async (filter?: ProjectFilter): Promise<Project[]> => {
     const params = new URLSearchParams();
     if (filter?.status && filter.status !== 'ALL') {
-      const backendStatus = projectStatusToBackend(filter.status);
-      params.append('status', backendStatus);
+      params.append('status', filter.status);
     }
     if (filter?.clientId && filter.clientId !== 'ALL') {
       params.append('clientId', filter.clientId);
     }
     if (filter?.type && filter.type !== 'ALL') {
-      const backendType = typeMapToBackend[filter.type] || filter.type;
-      params.append('type', backendType);
+      params.append('type', filter.type);
     }
     if (filter?.search) {
       params.append('search', filter.search);
     }
+    if (filter?.operationalView) params.append('operationalView', filter.operationalView);
 
     const query = params.toString() ? `?${params.toString()}` : '';
     const res = await api.get<{ projects: any[] }>(`/api/projects${query}`);
     return res.projects.map(formatProjectFromBackend);
   },
 
-  getById: async (id: string): Promise<Project> => {
-    const res = await api.get<{ project: any }>(`/api/projects/${id}`);
+  getById: async (id: string, operationalView?: OperationalViewMode): Promise<Project> => {
+    const query = operationalView ? `?operationalView=${operationalView}` : '';
+    const res = await api.get<{ project: any }>(`/api/projects/${id}${query}`);
     return formatProjectFromBackend(res.project);
   },
 
@@ -121,9 +105,9 @@ export const projectService = {
       name: data.name,
       description: data.description,
       client_id: data.clientId,
-      project_type: data.type ? (typeMapToBackend[data.type] || data.type) : 'WEBSITE',
+      product_id: data.type,
       manager_id: data.managerId,
-      status: data.status ? projectStatusToBackend(data.status) : 'PLANNING',
+      product_status_id: data.status,
       priority: data.priority ? (priorityMapToBackend[data.priority] || data.priority) : 'NORMAL',
       start_date: data.startDate,
       due_date: data.dueDate,
@@ -142,9 +126,9 @@ export const projectService = {
     if (data.name) payload.name = data.name;
     if (data.description !== undefined) payload.description = data.description;
     if (data.clientId) payload.client_id = data.clientId;
-    if (data.type) payload.project_type = typeMapToBackend[data.type] || data.type;
+    if (data.type) payload.product_id = data.type;
     if (data.managerId) payload.manager_id = data.managerId;
-    if (data.status) payload.status = projectStatusToBackend(data.status);
+    if (data.status) payload.product_status_id = data.status;
     if (data.priority) payload.priority = priorityMapToBackend[data.priority] || data.priority;
     if (data.startDate !== undefined) payload.start_date = data.startDate;
     if (data.dueDate !== undefined) payload.due_date = data.dueDate;

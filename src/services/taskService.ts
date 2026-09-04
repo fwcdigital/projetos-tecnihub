@@ -1,5 +1,5 @@
 import { api } from './api';
-import { ChecklistItem, Task, TaskStatus } from '../types';
+import { ChecklistItem, OperationalViewMode, Task, TaskStatus } from '../types';
 
 export interface TaskFilter {
   projectId?: string;
@@ -8,6 +8,8 @@ export interface TaskFilter {
   assigneeId?: string;
   search?: string;
   includeCompleted?: boolean;
+  completedOnly?: boolean;
+  operationalView?: OperationalViewMode;
 }
 
 type ChecklistItemUpdates = Omit<Partial<ChecklistItem>, 'dueDate' | 'dueTime' | 'assigneeId'> & {
@@ -27,6 +29,8 @@ export const taskService = {
       if (filter?.assigneeId) params.append('assigneeId', filter.assigneeId);
       if (filter?.search) params.append('search', filter.search);
       if (filter?.includeCompleted) params.append('includeCompleted', 'true');
+      if (filter?.completedOnly) params.append('completedOnly', 'true');
+      if (filter?.operationalView) params.append('operationalView', filter.operationalView);
 
       const queryString = params.toString() ? `?${params.toString()}` : '';
       const response = await api.get<{ success: boolean; total: number; tasks: Task[] }>(`/api/tasks${queryString}`);
@@ -42,9 +46,10 @@ export const taskService = {
   },
 
   // Obter tarefa por ID
-  getById: async (id: string): Promise<Task | null> => {
+  getById: async (id: string, operationalView?: OperationalViewMode): Promise<Task | null> => {
     try {
-      const response = await api.get<{ success: boolean; task: Task }>(`/api/tasks/${id}`);
+      const query = operationalView ? `?operationalView=${operationalView}` : '';
+      const response = await api.get<{ success: boolean; task: Task }>(`/api/tasks/${id}${query}`);
       return response?.task || null;
     } catch (error) {
       console.error(`Erro ao buscar tarefa ${id}:`, error);

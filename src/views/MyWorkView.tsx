@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Client, Priority, Project, Task, TaskStatus, User } from '../types';
+import { Client, Priority, Project, Task, User } from '../types';
 import { TaskRow } from '../components/TaskRow';
 import { CompletedTasksSection } from '../components/CompletedTasksSection';
 import { 
@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { StatusBadge } from '../components/StatusBadge';
 import { PriorityBadge } from '../components/PriorityBadge';
+import { GroupHeader, GroupedSections, GroupingSwitcher, groupTasks, usePersistentGrouping } from '../components/GroupingSwitcher';
 
 interface MyWorkViewProps {
   currentUser: User;
@@ -61,6 +62,11 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
   const [onlyOverdue, setOnlyOverdue] = useState(false);
   const [onlyRecurring, setOnlyRecurring] = useState(false);
   const [viewMode, setViewMode] = useState<'PROJECTS' | 'LIST' | 'TABLE' | 'KANBAN'>('PROJECTS');
+  const [grouping, setGrouping] = usePersistentGrouping('tecnihub:grouping:tasks', 'type');
+  const [overdueGrouping, setOverdueGrouping] = usePersistentGrouping('tecnihub:grouping:tasks:overdue', 'date');
+  const [todayGrouping, setTodayGrouping] = usePersistentGrouping('tecnihub:grouping:tasks:today', 'date');
+  const [tomorrowGrouping, setTomorrowGrouping] = usePersistentGrouping('tecnihub:grouping:tasks:tomorrow', 'date');
+  const [upcomingGrouping, setUpcomingGrouping] = usePersistentGrouping('tecnihub:grouping:tasks:upcoming', 'date');
 
   const dateKey = (daysAhead: number) => {
     const date = new Date();
@@ -114,7 +120,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
       }
 
       // Only Overdue
-      if (onlyOverdue && (task.dueDate >= todayStr || task.status === 'CONCLUIDO')) {
+      if (onlyOverdue && (task.dueDate >= todayStr || task.statusCompleted)) {
         return false;
       }
 
@@ -139,7 +145,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
   ]);
 
   const filteredCompletedTasks = useMemo(() => {
-    if (onlyOverdue || (selectedStatus !== 'ALL' && selectedStatus !== 'CONCLUIDO')) return [];
+    if (onlyOverdue) return [];
 
     return completedTasks.filter(task => {
       if (searchTerm.trim()) {
@@ -150,6 +156,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
       if (selectedAssignee !== 'ALL' && !task.participantIds.includes(selectedAssignee)) return false;
       if (selectedClient !== 'ALL' && task.clientId !== selectedClient) return false;
       if (selectedProject !== 'ALL' && task.projectId !== selectedProject) return false;
+      if (selectedStatus !== 'ALL' && task.status !== selectedStatus) return false;
       if (selectedPriority !== 'ALL' && task.priority !== selectedPriority) return false;
       if (onlyRecurring && !task.isRecurring) return false;
       return true;
@@ -167,15 +174,12 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
   ]);
 
   // Group Chronologically (ClickUp & Linear style)
-  const overdueTasks = filteredTasks.filter(t => t.dueDate < todayStr && t.status !== 'CONCLUIDO');
+  const overdueTasks = filteredTasks.filter(t => t.dueDate < todayStr && !t.statusCompleted);
   const todayTasks = filteredTasks.filter(t => t.dueDate === todayStr);
   const tomorrowTasks = filteredTasks.filter(t => t.dueDate === tomorrowStr);
-  const day03Tasks = filteredTasks.filter(t => t.dueDate === dayAfterTomorrowStr);
-  const day04Tasks = filteredTasks.filter(t => t.dueDate === thirdDayStr);
-  const upcomingTasks = filteredTasks.filter(t => t.dueDate > thirdDayStr);
-  const projectGroups = useMemo(() => projects
-    .map(project => ({ project, tasks: filteredTasks.filter(task => task.projectId === project.id) }))
-    .filter(group => group.tasks.length > 0), [projects, filteredTasks]);
+  const nextDaysTasks = filteredTasks.filter(t => t.dueDate > tomorrowStr);
+  const groupedTasks = useMemo(() => groupTasks(filteredTasks, grouping, projects), [filteredTasks, grouping, projects]);
+  const renderGroupedRows = (items: Task[], mode: typeof grouping, emptyMessage?: string) => <GroupedSections groups={groupTasks(items, mode, projects)} emptyMessage={emptyMessage} renderItem={task => <TaskRow key={task.id} task={task} onSelectTask={onSelectTask} onToggleComplete={onToggleComplete} onUpdateTask={onUpdateTask} projects={projects} />} />;
 
   const clearFilters = () => {
     setSearchTerm('');
@@ -217,7 +221,8 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
         </div>
 
         {/* View Switcher & Action */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <GroupingSwitcher value={grouping} onChange={setGrouping} />
           {/* List / Table / Kanban View Toggle */}
           <div className="flex items-center p-1 rounded-lg bg-zinc-900 border border-zinc-800 text-xs">
             <button
@@ -314,11 +319,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
             className="bg-[#181820] border border-zinc-700/80 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-500"
           >
             <option value="ALL">⚡ Todos os Status</option>
-            <option value="A_FAZER">A Fazer</option>
-            <option value="EM_ANDAMENTO">Em Andamento</option>
-            <option value="AGUARDANDO_CLIENTE">Aguardando Cliente</option>
-            <option value="EM_REVISAO">Em Revisão</option>
-            <option value="CONCLUIDO">Concluído</option>
+            {[...new Map([...tasks, ...completedTasks].map(task => [task.status, task])).values()].map(task => <option key={task.status} value={task.status}>{task.statusName || task.status}</option>)}
           </select>
 
           {/* Filter: Prioridade */}
@@ -377,20 +378,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
       </div>
 
       {viewMode === 'PROJECTS' && (
-        <div className="space-y-4">
-          {projectGroups.map(({ project, tasks: projectTasks }) => (
-            <section key={project.id} className="overflow-visible rounded-xl border border-zinc-800 bg-[#101014]">
-              <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2.5">
-                <div className="min-w-0"><h2 className="truncate text-xs font-black text-zinc-100">{project.name}</h2><p className="mt-0.5 truncate text-[10px] text-zinc-500">{project.clientName}</p></div>
-                <span className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-0.5 font-mono text-[10px] text-zinc-400">{projectTasks.length}</span>
-              </div>
-              <div className="space-y-1 p-2">
-                {projectTasks.map(task => <TaskRow key={task.id} task={task} onSelectTask={onSelectTask} onToggleComplete={onToggleComplete} onUpdateTask={onUpdateTask} projects={projects} />)}
-              </div>
-            </section>
-          ))}
-          {projectGroups.length === 0 && <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-10 text-center text-xs text-zinc-500">Nenhuma tarefa encontrada com os filtros selecionados.</div>}
-        </div>
+        <GroupedSections<Task> groups={groupedTasks} emptyMessage="Nenhuma tarefa encontrada com os filtros selecionados." renderItem={task => <TaskRow key={task.id} task={task} onSelectTask={onSelectTask} onToggleComplete={onToggleComplete} onUpdateTask={onUpdateTask} projects={projects} />} />
       )}
 
       {/* VIEW MODE 1: CHRONOLOGICAL LIST (The Core ClickUp Experience) */}
@@ -406,21 +394,10 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                     ATRASADAS ({overdueTasks.length})
                   </h2>
                 </div>
-                <span className="text-[11px] text-rose-400/80 font-medium">Requer atenção imediata</span>
+                <GroupingSwitcher value={overdueGrouping} onChange={setOverdueGrouping} label="Agrupar atrasadas por:" />
               </div>
 
-              <div className="space-y-2">
-                {overdueTasks.map(task => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    onSelectTask={onSelectTask}
-                    onToggleComplete={onToggleComplete}
-                    onUpdateTask={onUpdateTask}
-                    projects={projects}
-                  />
-                ))}
-              </div>
+              {renderGroupedRows(overdueTasks, overdueGrouping)}
             </div>
           )}
 
@@ -433,7 +410,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                   HOJE • {formatLongDate(todayStr)} ({todayTasks.length})
                 </h2>
               </div>
-              <span className="text-[11px] text-amber-400/80 font-medium">Meta do dia</span>
+              <GroupingSwitcher value={todayGrouping} onChange={setTodayGrouping} label="Agrupar hoje por:" />
             </div>
 
             {todayTasks.length === 0 ? (
@@ -441,18 +418,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                 Nenhuma tarefa agendada para hoje com os filtros selecionados.
               </div>
             ) : (
-              <div className="space-y-2">
-                {todayTasks.map(task => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    onSelectTask={onSelectTask}
-                    onToggleComplete={onToggleComplete}
-                    onUpdateTask={onUpdateTask}
-                    projects={projects}
-                  />
-                ))}
-              </div>
+              renderGroupedRows(todayTasks, todayGrouping)
             )}
           </div>
 
@@ -465,6 +431,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                   AMANHÃ • {formatLongDate(tomorrowStr)} ({tomorrowTasks.length})
                 </h2>
               </div>
+              <GroupingSwitcher value={tomorrowGrouping} onChange={setTomorrowGrouping} label="Agrupar amanhã por:" />
             </div>
 
             {tomorrowTasks.length === 0 ? (
@@ -472,99 +439,23 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                 Nenhuma tarefa para amanhã.
               </div>
             ) : (
-              <div className="space-y-2">
-                {tomorrowTasks.map(task => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    onSelectTask={onSelectTask}
-                    onToggleComplete={onToggleComplete}
-                    onUpdateTask={onUpdateTask}
-                    projects={projects}
-                  />
-                ))}
-              </div>
+              renderGroupedRows(tomorrowTasks, tomorrowGrouping)
             )}
           </div>
 
-          {/* 4. 03 SET */}
-          {day03Tasks.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between px-1 py-1 border-b border-zinc-800">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-zinc-400" />
-                  <h2 className="text-xs font-black uppercase tracking-wider text-zinc-300">
-                    {formatLongDate(dayAfterTomorrowStr)} ({day03Tasks.length})
-                  </h2>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {day03Tasks.map(task => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    onSelectTask={onSelectTask}
-                    onToggleComplete={onToggleComplete}
-                    onUpdateTask={onUpdateTask}
-                    projects={projects}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 5. 04 SET */}
-          {day04Tasks.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between px-1 py-1 border-b border-zinc-800">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-zinc-400" />
-                  <h2 className="text-xs font-black uppercase tracking-wider text-zinc-300">
-                    {formatLongDate(thirdDayStr)} ({day04Tasks.length})
-                  </h2>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {day04Tasks.map(task => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    onSelectTask={onSelectTask}
-                    onToggleComplete={onToggleComplete}
-                    onUpdateTask={onUpdateTask}
-                    projects={projects}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 6. PRÓXIMOS */}
-          {upcomingTasks.length > 0 && (
+          {/* 4. PRÓXIMOS DIAS */}
+          {nextDaysTasks.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center justify-between px-1 py-1 border-b border-zinc-800">
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-purple-400" />
                   <h2 className="text-xs font-black uppercase tracking-wider text-purple-300">
-                    PRÓXIMOS DIAS ({upcomingTasks.length})
+                    PRÓXIMOS DIAS ({nextDaysTasks.length})
                   </h2>
                 </div>
+                <GroupingSwitcher value={upcomingGrouping} onChange={setUpcomingGrouping} label="Agrupar próximos dias por:" />
               </div>
-
-              <div className="space-y-2">
-                {upcomingTasks.map(task => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    onSelectTask={onSelectTask}
-                    onToggleComplete={onToggleComplete}
-                    onUpdateTask={onUpdateTask}
-                    projects={projects}
-                  />
-                ))}
-              </div>
+              {renderGroupedRows(nextDaysTasks, upcomingGrouping)}
             </div>
           )}
         </div>
@@ -586,8 +477,9 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                 <th className="p-3">Recorrente</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-800/60">
-              {filteredTasks.map(task => (
+            {groupedTasks.map(group => <tbody key={group.key} className="divide-y divide-zinc-800/60">
+              <tr><td colSpan={8} className="bg-zinc-950/60 p-2"><GroupHeader group={group} count={group.items.length} /></td></tr>
+              {group.items.map(task => (
                 <tr
                   key={task.id}
                   onClick={() => onSelectTask(task)}
@@ -611,38 +503,29 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                     <PriorityBadge priority={task.priority} size="sm" />
                   </td>
                   <td className="p-3">
-                    <StatusBadge status={task.status} size="sm" />
+                    <StatusBadge status={task.status} label={task.statusName} color={task.statusColor} size="sm" />
                   </td>
                   <td className="p-3 text-zinc-400">
                     {task.isRecurring ? 'Sim' : 'Não'}
                   </td>
                 </tr>
               ))}
-            </tbody>
+            </tbody>)}
           </table>
         </div>
       )}
 
       {/* VIEW MODE 3: KANBAN BOARD */}
       {viewMode === 'KANBAN' && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 overflow-x-auto pb-4">
-          {[
-            { id: 'A_FAZER' as TaskStatus, label: 'A fazer' },
-            { id: 'EM_ANDAMENTO' as TaskStatus, label: 'Em andamento' },
-            { id: 'EM_REVISAO' as TaskStatus, label: 'Em revisão / aprovação' },
-          ].map(column => {
-            const colTasks = filteredTasks.filter(t => t.status === column.id);
-            return (
-              <div key={column.id} className="bg-[#121216] border border-zinc-800 rounded-xl p-3 flex flex-col min-h-[450px]">
+        <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-4 overflow-x-auto pb-4">
+          {groupedTasks.map(group => (
+              <div key={group.key} className="bg-[#121216] border border-zinc-800 rounded-xl p-3 flex flex-col min-h-[300px]">
                 <div className="mb-3 flex items-center justify-between border-b border-zinc-800 pb-2">
-                  <StatusBadge status={column.id} label={column.label} size="sm" />
-                  <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-[11px] font-mono text-zinc-300">
-                    {colTasks.length}
-                  </span>
+                  <GroupHeader group={group} count={group.items.length} />
                 </div>
 
                 <div className="space-y-2.5 flex-1">
-                  {colTasks.map(task => (
+                  {group.items.map(task => (
                     <div
                       key={task.id}
                       onClick={() => onSelectTask(task)}
@@ -661,8 +544,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                   ))}
                 </div>
               </div>
-            );
-          })}
+          ))}
         </div>
       )}
 

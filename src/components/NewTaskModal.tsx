@@ -7,7 +7,7 @@ import { DateTimePicker } from './DateTimePicker';
 import { canManageTaskAssignments } from '../permissions';
 import { PriorityPicker } from './PriorityPicker';
 import { StatusPicker } from './StatusPicker';
-import { TASK_STATUS_OPTIONS } from './visualTokens';
+import { getWorkflowStatusOptions } from './visualTokens';
 
 interface NewTaskModalProps {
   isOpen: boolean;
@@ -33,7 +33,7 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
   const [projectId, setProjectId] = useState(firstProject?.id || '');
   const [assigneeIds, setAssigneeIds] = useState<string[]>([currentUser.id]);
   const [priority, setPriority] = useState<Priority>('NORMAL');
-  const [status, setStatus] = useState<TaskStatus>('A_FAZER');
+  const [status, setStatus] = useState<TaskStatus>(firstProject?.workflowStatuses?.[0]?.id || '');
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [startTime, setStartTime] = useState('');
   const [dueDate, setDueDate] = useState(new Date().toISOString().slice(0, 10));
@@ -55,6 +55,8 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
   }, [currentUser.id, firstProject?.id, isOpen]);
 
   const selectedProject = projects.find(project => project.id === projectId) || firstProject;
+  const workflowStatuses = selectedProject?.workflowStatuses || [];
+  const statusOptions = getWorkflowStatusOptions(workflowStatuses, { value: status });
   const selectedClient = clients.find(client => client.id === selectedProject?.clientId);
   const projectMemberIds = new Set(selectedProject?.teamMemberDetails?.map(member => member.id) || []);
   const candidateUsers = [...users]
@@ -65,6 +67,10 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
   useEffect(() => {
     setAssigneeIds([preferredAssigneeId]);
   }, [preferredAssigneeId, projectId]);
+
+  useEffect(() => {
+    if (!workflowStatuses.some(option => option.id === status)) setStatus(workflowStatuses[0]?.id || '');
+  }, [projectId, status, workflowStatuses]);
 
   useEffect(() => {
     if (!selectedProject) return;
@@ -79,6 +85,10 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
     event.preventDefault();
     if (!title.trim() || !selectedProject || !dueDate || assigneeIds.length === 0) {
       setError('Preencha título, projeto, responsável e prazo.');
+      return;
+    }
+    if (!workflowStatuses.some(option => option.id === status)) {
+      setError('Selecione um Status compatível com o Tipo do projeto.');
       return;
     }
     const assignee = users.find(user => user.id === assigneeIds[0]) || currentUser;
@@ -128,7 +138,7 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
             <div><label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1"><FolderKanban size={12} />Projeto *</label><select value={projectId} onChange={event => setProjectId(event.target.value)} className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200">{projects.map(project => <option key={project.id} value={project.id}>{project.name} ({project.clientName})</option>)}</select></div>
           )}
           <div className="rounded-xl border border-zinc-800 bg-[#181820] p-3"><AssigneePicker users={candidateUsers} selectedIds={assigneeIds} onChange={setAssigneeIds} disabled={!canAssignPeople} /></div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><div><label className="block text-[11px] font-semibold text-zinc-400 mb-1">Status</label><StatusPicker value={status} options={TASK_STATUS_OPTIONS} onChange={value => setStatus(value as TaskStatus)} ariaLabel="Status inicial da tarefa" /></div><div><label className="block text-[11px] font-semibold text-zinc-400 mb-1">Prioridade</label><PriorityPicker value={priority} onChange={setPriority} /></div></div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><div><label className="block text-[11px] font-semibold text-zinc-400 mb-1">Status</label><StatusPicker value={status} options={statusOptions} onChange={value => setStatus(value as TaskStatus)} ariaLabel="Status inicial da tarefa" /></div><div><label className="block text-[11px] font-semibold text-zinc-400 mb-1">Prioridade</label><PriorityPicker value={priority} onChange={setPriority} /></div></div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><DateTimePicker label="Data inicial" value={startDate} time={startTime} allowClear onChange={(date, time) => { setStartDate(date); setStartTime(date ? (time || '') : ''); if (date && dueDate < date) setDueDate(date); }} /><DateTimePicker label="Prazo" value={dueDate} time={dueTime} onChange={(date, time) => { setDueDate(startDate && date < startDate ? startDate : date); setDueTime(time || ''); }} /></div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-zinc-800 bg-[#181820] p-3"><label className="text-[11px] font-semibold text-zinc-400">Recorrência<select value={recurrenceFrequency} onChange={event => setRecurrenceFrequency(event.target.value as RecurrenceFrequency)} className="mt-1 block w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-zinc-200"><option value="NAO_REPETIR">Não repetir</option><option value="DIARIO">Diariamente</option><option value="SEMANAL">Semanalmente</option><option value="QUINZENAL">Quinzenalmente</option><option value="MENSAL">Mensalmente</option><option value="PERSONALIZADO">Personalizado</option></select></label>{recurrenceFrequency === 'PERSONALIZADO' && <div className="grid grid-cols-[90px_1fr] gap-2"><label className="text-[11px] font-semibold text-zinc-400">Intervalo<input type="number" min="1" value={customIntervalDays} onChange={event => setCustomIntervalDays(Math.max(1, Number(event.target.value)))} className="mt-1 block w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-zinc-200 outline-none" /></label><label className="text-[11px] font-semibold text-zinc-400">Regra personalizada<input value={customRecurrence} onChange={event => setCustomRecurrence(event.target.value)} placeholder={`A cada ${customIntervalDays} dias`} className="mt-1 block w-full rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-zinc-200 outline-none" /></label></div>}</div>
           <div><label className="block text-[11px] font-semibold text-zinc-400 mb-1">Descrição</label><textarea rows={3} value={description} onChange={event => setDescription(event.target.value)} className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2.5 text-zinc-200 resize-none" /></div>

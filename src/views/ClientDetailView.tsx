@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { PriorityPicker } from '../components/PriorityPicker';
 import { StatusPicker } from '../components/StatusPicker';
-import { getProjectStatusOptions } from '../components/visualTokens';
+import { getWorkflowStatusOptions } from '../components/visualTokens';
 import { canManageProjectOperations } from '../permissions';
 
 interface ClientDetailViewProps {
@@ -189,7 +189,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
             >
               <div className="flex items-center justify-between">
                 <span className="font-bold text-sm text-zinc-100">{p.name}</span>
-                <div className="flex items-center gap-1.5"><PriorityPicker value={p.priority} onChange={canManageProjects ? priority => void onUpdateProject(p, { priority }) : undefined} /><StatusPicker value={p.status} options={getProjectStatusOptions(projectStatuses, { value: p.status, label: p.statusName, color: p.statusColor })} onChange={canManageProjects ? status => void onUpdateProject(p, { status }) : undefined} ariaLabel={`Alterar status de ${p.name}`} /></div>
+                <div className="flex items-center gap-1.5"><PriorityPicker value={p.priority} onChange={canManageProjects ? priority => void onUpdateProject(p, { priority }) : undefined} /><StatusPicker value={p.status} options={getWorkflowStatusOptions(p.workflowStatuses || [], { value: p.status, label: p.statusName, color: p.statusColor })} onChange={canManageProjects ? status => void onUpdateProject(p, { status }) : undefined} ariaLabel={`Alterar status de ${p.name}`} /></div>
               </div>
               <p className="text-xs text-zinc-400 line-clamp-1">{p.description}</p>
               <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-1 border-t border-zinc-800/80">

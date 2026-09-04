@@ -196,7 +196,7 @@ test('repositórios persistem clientes/projetos e aplicam o escopo RBAC', async 
 
     const completedAt = new Date().toISOString();
     const completedTask = await taskRepository.update(taskOne.id, { status: 'CONCLUIDO', completed_at: completedAt });
-    assert.equal(completedTask?.status, 'CONCLUIDO');
+    assert.equal(completedTask?.status, 'SITE_COMPLETED');
     assert.equal(completedTask?.completedAt, completedAt);
 
     const activeProjectTasks = await taskRepository.findAll(
@@ -206,7 +206,7 @@ test('repositórios persistem clientes/projetos e aplicam o escopo RBAC', async 
     assert.deepEqual(new Set(activeProjectTasks.map(task => task.id)), new Set([taskThree.id, taskFour.id]));
     assert.deepEqual(
       (await taskRepository.findAll(
-        { projectId: projectOne.id, status: 'CONCLUIDO' },
+        { projectId: projectOne.id, status: 'SITE_COMPLETED' },
         { id: ids.collaborator, role: 'COLLABORATOR' }
       )).map(task => task.id),
       [taskOne.id]
@@ -216,7 +216,7 @@ test('repositórios persistem clientes/projetos e aplicam o escopo RBAC', async 
       { id: ids.collaborator, role: 'COLLABORATOR' }
     )).length, 3);
     assert.equal((await taskRepository.findAll(
-      { projectId: projectOne.id, status: 'CONCLUIDO' },
+      { projectId: projectOne.id, status: 'SITE_COMPLETED' },
       { id: ids.outsider, role: 'COLLABORATOR' }
     )).length, 0);
 
@@ -225,16 +225,16 @@ test('repositórios persistem clientes/projetos e aplicam o escopo RBAC', async 
     useAsPool(database);
     assert.equal((await taskRepository.findAll({ projectId: projectOne.id }, { id: ids.superAdmin, role: 'SUPER_ADMIN' })).length, 2);
     assert.equal((await taskRepository.findAll(
-      { projectId: projectOne.id, status: 'CONCLUIDO' },
+      { projectId: projectOne.id, status: 'SITE_COMPLETED' },
       { id: ids.superAdmin, role: 'SUPER_ADMIN' }
     )).length, 1);
 
     const reopenedTask = await taskRepository.update(taskOne.id, { status: 'A_FAZER', completed_at: null });
-    assert.equal(reopenedTask?.status, 'A_FAZER');
+    assert.equal(reopenedTask?.status, 'SITE_PLANNING');
     assert.equal(reopenedTask?.completedAt, undefined);
     assert.equal((await taskRepository.findAll({ projectId: projectOne.id }, { id: ids.superAdmin, role: 'SUPER_ADMIN' })).length, 3);
     assert.equal((await taskRepository.findAll(
-      { projectId: projectOne.id, status: 'CONCLUIDO' },
+      { projectId: projectOne.id, status: 'SITE_COMPLETED' },
       { id: ids.superAdmin, role: 'SUPER_ADMIN' }
     )).length, 0);
 

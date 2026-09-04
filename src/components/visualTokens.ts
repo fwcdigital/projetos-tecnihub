@@ -1,4 +1,4 @@
-import { Priority, ProjectStatusDefinition, TaskStatus } from '../types';
+import { Priority, ProductStatusDefinition, Project, ProjectStatusDefinition, Task, TaskStatus } from '../types';
 
 export interface StatusVisualConfig {
   label: string;
@@ -13,16 +13,6 @@ export interface PriorityVisualConfig {
   color: string;
   surface: string;
 }
-
-export const TASK_STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
-  { value: 'BACKLOG', label: 'Backlog' },
-  { value: 'A_FAZER', label: 'A fazer' },
-  { value: 'EM_ANDAMENTO', label: 'Em andamento' },
-  { value: 'AGUARDANDO_CLIENTE', label: 'Aguardando cliente' },
-  { value: 'EM_REVISAO', label: 'Em revisão' },
-  { value: 'BLOQUEADO', label: 'Bloqueado' },
-  { value: 'CONCLUIDO', label: 'Concluído' }
-];
 
 const STATUS_VISUALS: Record<string, StatusVisualConfig> = {
   BACKLOG: { label: 'Backlog', bg: 'bg-zinc-800/70', text: 'text-zinc-300', border: 'border-zinc-700', dot: 'bg-zinc-400' },
@@ -63,6 +53,29 @@ export function getProjectStatusOptions(
     options.push({ value: current.value, label: current.label || current.value, color: current.color || '#71717a' });
   }
   return options;
+}
+
+export function getWorkflowStatusOptions(
+  statuses: ProductStatusDefinition[],
+  current?: { value: string; label?: string; color?: string }
+): Array<{ value: string; label: string; color: string }> {
+  return getProjectStatusOptions(statuses, current);
+}
+
+export function isTaskCompleted(task: Pick<Task, 'statusCompleted' | 'completedAt'>): boolean {
+  return Boolean(task.statusCompleted || task.completedAt);
+}
+
+export function isProjectCompleted(project: Pick<Project, 'statusCompleted'>): boolean {
+  return Boolean(project.statusCompleted);
+}
+
+export function getCompletedWorkflowStatus(statuses?: ProductStatusDefinition[]): ProductStatusDefinition | undefined {
+  return statuses?.find(status => status.active && status.isCompleted) || statuses?.find(status => status.isCompleted);
+}
+
+export function getOpenWorkflowStatus(statuses?: ProductStatusDefinition[]): ProductStatusDefinition | undefined {
+  return statuses?.find(status => status.active && !status.isCompleted) || statuses?.find(status => !status.isCompleted);
 }
 
 export const PRIORITY_OPTIONS: Array<{ value: Priority } & PriorityVisualConfig> = [

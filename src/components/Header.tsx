@@ -11,9 +11,10 @@ import {
   Menu,
   X
 } from 'lucide-react';
-import { User, Notification } from '../types';
+import { OperationalViewMode, User, Notification } from '../types';
 import { UserRoleSwitcher } from './UserRoleSwitcher';
 import { NavView } from './Sidebar';
+import { isAdministrator } from '../permissions';
 
 interface HeaderProps {
   currentView: NavView;
@@ -30,6 +31,8 @@ interface HeaderProps {
   onOpenMobileMenu?: () => void;
   notifications?: Notification[];
   onMarkAllNotificationsRead?: () => void;
+  operationalView: OperationalViewMode;
+  onOperationalViewChange: (mode: OperationalViewMode) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -46,7 +49,9 @@ export const Header: React.FC<HeaderProps> = ({
   overdueCount,
   onOpenMobileMenu,
   notifications = [],
-  onMarkAllNotificationsRead
+  onMarkAllNotificationsRead,
+  operationalView,
+  onOperationalViewChange
 }) => {
   const [isNewMenuOpen, setIsNewMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -116,6 +121,21 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right Actions: Search + Switcher + Notifications + + NOVO */}
       <div className="flex items-center gap-1.5 sm:gap-2.5">
+        {isAdministrator(currentUser.role) && (
+          <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-950 p-0.5" role="group" aria-label="Modo operacional do sistema">
+            {(['admin', 'operator'] as OperationalViewMode[]).map(mode => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => onOperationalViewChange(mode)}
+                aria-pressed={operationalView === mode}
+                className={`rounded-md px-1.5 py-1.5 text-[10px] font-semibold transition-colors sm:px-2.5 sm:text-[11px] ${operationalView === mode ? 'bg-emerald-500 text-zinc-950 shadow-sm' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}`}
+              >
+                Modo {mode === 'admin' ? 'Admin' : 'Operador'}
+              </button>
+            ))}
+          </div>
+        )}
         {/* Global Search Button */}
         <button
           onClick={onOpenGlobalSearch}

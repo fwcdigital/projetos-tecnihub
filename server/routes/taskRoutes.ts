@@ -1,12 +1,11 @@
 import { Router, Response } from 'express';
-import { checklistRepository, projectRepository, routineRepository, taskCommentRepository, taskRepository, userRepository, TaskPriority, TaskStatus } from '../db.js';
+import { checklistRepository, productStatusRepository, projectRepository, routineRepository, taskCommentRepository, taskRepository, userRepository, TaskPriority, TaskStatus } from '../db.js';
 import { authenticateToken, AuthRequest } from '../auth.js';
 import { isUuid } from '../validation.js';
-import { canManageTaskAssignments } from '../permissions.js';
+import { canManageTaskAssignments, isAdministrator } from '../permissions.js';
 
 export const taskRouter = Router();
 
-const TASK_STATUSES: TaskStatus[] = ['BACKLOG', 'A_FAZER', 'EM_ANDAMENTO', 'AGUARDANDO_CLIENTE', 'EM_REVISAO', 'CONCLUIDO', 'BLOQUEADO'];
 const TASK_PRIORITIES: TaskPriority[] = ['URGENTE', 'ALTA', 'NORMAL', 'BAIXA'];
 
 function sameIds(left: string[], right: string[]): boolean {
@@ -41,18 +40,28 @@ async function validateAssignees(project: any, userIds: unknown, req: AuthReques
 taskRouter.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     await routineRepository.materializeDueOccurrences(req.user);
-    const { projectId, clientId, status, assigneeId, search, includeCompleted } = req.query;
+    const { projectId, clientId, status, assigneeId, search, includeCompleted, completedOnly, operationalView } = req.query;
     if (projectId && !isUuid(String(projectId))) return res.status(400).json({ error: 'Projeto inválido.' });
     if (clientId && !isUuid(String(clientId))) return res.status(400).json({ error: 'Cliente inválido.' });
     if (assigneeId && !isUuid(String(assigneeId))) return res.status(400).json({ error: 'Responsável inválido.' });
-    if (status && !TASK_STATUSES.includes(status as TaskStatus)) return res.status(400).json({ error: 'Status de tarefa inválido.' });
+    if (status && !(await productStatusRepository.findByStatusId(String(status)))) return res.status(400).json({ error: 'Status de tarefa inválido.' });
     if (includeCompleted && !['true', 'false'].includes(String(includeCompleted))) {
       return res.status(400).json({ error: 'O filtro includeCompleted deve ser true ou false.' });
     }
+    if (completedOnly && !['true', 'false'].includes(String(completedOnly))) {
+      return res.status(400).json({ error: 'O filtro completedOnly deve ser true ou false.' });
+    }
+    if (operationalView && !['admin', 'operator'].includes(String(operationalView))) {
+      return res.status(400).json({ error: 'Contexto operacional inválido.' });
+    }
+    if (operationalView && !isAdministrator(req.user)) {
+      return res.status(403).json({ error: 'O contexto operacional é exclusivo para administradores.' });
+    }
+    const operationalAssigneeId = operationalView === 'operator' ? req.user!.id : undefined;
     const tasks = await taskRepository.findAll({
       projectId: projectId as string, clientId: clientId as string, status: status as TaskStatus,
-      assigneeId: assigneeId as string, search: search as string,
-      includeCompleted: String(includeCompleted) === 'true'
+      assigneeId: operationalAssigneeId || assigneeId as string, search: search as string,
+      includeCompleted: String(includeCompleted) === 'true', completedOnly: String(completedOnly) === 'true'
     }, req.user);
     return res.json({ success: true, total: tasks.length, tasks });
   } catch (error) {
@@ -104,9 +113,12 @@ taskRouter.delete('/:id/recurrence', authenticateToken, async (req: AuthRequest,
 taskRouter.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Tarefa não encontrada.' });
+    const operationalView = req.query.operationalView;
+    if (operationalView && !['admin', 'operator'].includes(String(operationalView))) return res.status(400).json({ error: 'Contexto operacional inválido.' });
+    if (operationalView && !isAdministrator(req.user)) return res.status(403).json({ error: 'O contexto operacional é exclusivo para administradores.' });
     const existing = await taskRepository.findById(req.params.id);
     if (!existing) return res.status(404).json({ error: 'Tarefa não encontrada.' });
-    const task = await taskRepository.findById(req.params.id, req.user);
+    const task = await taskRepository.findById(req.params.id, req.user, operationalView === 'operator' ? req.user!.id : undefined);
     if (!task) return res.status(403).json({ error: 'Acesso negado a esta tarefa.' });
     return res.json({ success: true, task });
   } catch {
@@ -145,7 +157,7 @@ taskRouter.post('/', authenticateToken, async (req: AuthRequest, res: Response) 
       ? Array.from(new Set(requestedAssignees.map(String)))
       : [req.body.assigneeId || req.body.responsible_user_id || req.user?.id];
     const responsibleUserId = assigneeIds[0];
-    const { title, description, status = 'A_FAZER', priority = 'NORMAL' } = req.body;
+    const { title, description, status, priority = 'NORMAL' } = req.body;
     const startDate = req.body.startDate ?? req.body.start_date ?? null;
     const startTime = req.body.startTime ?? req.body.start_time ?? null;
     const dueDate = req.body.dueDate ?? req.body.due_date ?? parentTask?.dueDate;
@@ -154,10 +166,15 @@ taskRouter.post('/', authenticateToken, async (req: AuthRequest, res: Response) 
     if (!projectId || !isUuid(projectId)) return res.status(400).json({ error: 'O projeto é obrigatório.' });
     if (!dueDate) return res.status(400).json({ error: 'O prazo final da tarefa é obrigatório.' });
     if (startDate && dueDate < startDate) return res.status(400).json({ error: 'O prazo final não pode ser anterior à data inicial.' });
-    if (!TASK_STATUSES.includes(status)) return res.status(400).json({ error: 'Status de tarefa inválido.' });
     if (!TASK_PRIORITIES.includes(priority)) return res.status(400).json({ error: 'Prioridade de tarefa inválida.' });
     const project = await accessibleProject(projectId, req);
     if (!project) return res.status(403).json({ error: 'Acesso negado ao projeto informado.' });
+    const selectedStatus = status
+      ? await productStatusRepository.findById(project.productId, String(status))
+      : await productStatusRepository.findFirstActive(project.productId);
+    if (!selectedStatus || !selectedStatus.active) {
+      return res.status(400).json({ error: 'Status incompatível ou inativo para o Tipo do projeto.' });
+    }
     if (!canManageTaskAssignments(req.user) && !sameIds(assigneeIds, [req.user!.id])) {
       return res.status(403).json({ error: 'Sem permissão para atribuir outras pessoas à tarefa.' });
     }
@@ -182,9 +199,9 @@ taskRouter.post('/', authenticateToken, async (req: AuthRequest, res: Response) 
     }
     let task = await taskRepository.create({
       project_id: projectId, parent_task_id: parentTaskId, title: title.trim(), description: description?.trim() || '',
-      responsible_user_id: responsibleUserId, status, priority, start_date: startDate || null, start_time: startTime || null,
+      responsible_user_id: responsibleUserId, status: selectedStatus.id, priority, start_date: startDate || null, start_time: startTime || null,
       due_date: dueDate, due_time: dueTime || null,
-      completed_at: status === 'CONCLUIDO' ? new Date().toISOString() : null,
+      completed_at: selectedStatus.is_completed ? new Date().toISOString() : null,
       created_by: req.user!.id, assignee_ids: assigneeIds
     });
     if (recurrenceData) {
@@ -231,7 +248,14 @@ taskRouter.put('/:id', authenticateToken, async (req: AuthRequest, res: Response
     if (responsibleError) return res.status(400).json({ error: responsibleError });
     const status = req.body.status as TaskStatus | undefined;
     const priority = req.body.priority as TaskPriority | undefined;
-    if (status && !TASK_STATUSES.includes(status)) return res.status(400).json({ error: 'Status de tarefa inválido.' });
+    const selectedStatus = status ? await productStatusRepository.findById(project.productId, status) : null;
+    if (status && (!selectedStatus || (!selectedStatus.active && status !== existing.status))) {
+      return res.status(400).json({ error: 'Status incompatível ou inativo para o Tipo do projeto.' });
+    }
+    if (targetProjectId !== existing.projectId && !status) {
+      const existingStatusInTarget = await productStatusRepository.findById(project.productId, existing.status);
+      if (!existingStatusInTarget) return res.status(400).json({ error: 'Mover a tarefa exige um Status compatível com o novo Tipo.' });
+    }
     if (priority && !TASK_PRIORITIES.includes(priority)) return res.status(400).json({ error: 'Prioridade de tarefa inválida.' });
     const updates: any = {};
     if (req.body.title !== undefined) {
@@ -243,7 +267,10 @@ taskRouter.put('/:id', authenticateToken, async (req: AuthRequest, res: Response
     if (targetProjectId !== existing.projectId) updates.project_id = targetProjectId;
     if (targetResponsibleId !== existing.assigneeId) updates.responsible_user_id = targetResponsibleId;
     if (Array.isArray(requestedAssignees) || legacyAssigneeId) updates.assignee_ids = targetAssigneeIds;
-    if (status) { updates.status = status; updates.completed_at = status === 'CONCLUIDO' ? (existing.completedAt || new Date().toISOString()) : null; }
+    if (status && selectedStatus) {
+      updates.status = status;
+      updates.completed_at = selectedStatus.is_completed ? (existing.completedAt || new Date().toISOString()) : null;
+    }
     if (priority) updates.priority = priority;
     if (req.body.startDate !== undefined || req.body.start_date !== undefined) updates.start_date = req.body.startDate ?? req.body.start_date ?? null;
     if (req.body.startTime !== undefined || req.body.start_time !== undefined) updates.start_time = req.body.startTime ?? req.body.start_time ?? null;

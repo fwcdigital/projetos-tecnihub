@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Client, Priority, Project, ProjectStatus, ProjectStatusDefinition, ProjectType, User } from '../types';
+import { Client, Priority, ProductDefinition, Project, ProjectStatus, ProjectType, User } from '../types';
 import { X, FolderPlus, Building2, User as UserIcon, Repeat, Loader2, AlertCircle } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { DateTimePicker } from './DateTimePicker';
 import { isAdministrator } from '../permissions';
 import { PriorityPicker } from './PriorityPicker';
 import { StatusPicker } from './StatusPicker';
-import { getProjectStatusOptions } from './visualTokens';
+import { getWorkflowStatusOptions } from './visualTokens';
 
 interface NewProjectModalProps {
   isOpen: boolean;
@@ -16,7 +16,7 @@ interface NewProjectModalProps {
   users: User[];
   currentUser: User;
   defaultClientId?: string;
-  projectStatuses: ProjectStatusDefinition[];
+  products: ProductDefinition[];
 }
 
 export const NewProjectModal: React.FC<NewProjectModalProps> = ({
@@ -27,15 +27,18 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
   users,
   currentUser,
   defaultClientId,
-  projectStatuses
+  products
 }) => {
   const [name, setName] = useState('');
   const [clientId, setClientId] = useState(defaultClientId || clients[0]?.id || '');
   const [managerId, setManagerId] = useState(currentUser.id);
-  const [type, setType] = useState<ProjectType>('SITE');
-  const [status, setStatus] = useState<ProjectStatus>(projectStatuses[0]?.id || 'PLANEJAMENTO');
+  const activeProducts = products.filter(product => product.active);
+  const [type, setType] = useState<ProjectType>(activeProducts[0]?.id || '');
+  const selectedProduct = activeProducts.find(product => product.id === type) || activeProducts[0];
+  const availableStatuses = selectedProduct?.statuses || [];
+  const [status, setStatus] = useState<ProjectStatus>(availableStatuses[0]?.id || '');
   const [priority, setPriority] = useState<Priority>('ALTA');
-  const statusOptions = getProjectStatusOptions(projectStatuses, { value: status });
+  const statusOptions = getWorkflowStatusOptions(availableStatuses, { value: status });
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
   const [dueDate, setDueDate] = useState('');
   const [isRecurring, setIsRecurring] = useState(false);
@@ -54,25 +57,19 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
     if (!isOpen) return;
     setClientId(defaultClientId || clients[0]?.id || '');
     if (currentUser.role === 'GESTOR_PROJETO') setManagerId(currentUser.id);
-    if (!projectStatuses.some(option => option.id === status)) setStatus(projectStatuses[0]?.id || 'PLANEJAMENTO');
-  }, [clients, currentUser.id, currentUser.role, defaultClientId, isOpen, projectStatuses, status]);
-
-  const projectTypeOptions: { value: ProjectType; label: string }[] = [
-    { value: 'SITE', label: 'Criação de Site Institucional' },
-    { value: 'LANDING_PAGE', label: 'Landing Page' },
-    { value: 'ECOMMERCE', label: 'Loja Virtual / E-commerce' },
-    { value: 'GOOGLE_ADS', label: 'Tráfego Pago (Google Ads)' },
-    { value: 'META_ADS', label: 'Mídia Paga (Meta Ads)' },
-    { value: 'SEO', label: 'Otimização SEO' },
-    { value: 'SOCIAL_MEDIA', label: 'Social Media & Conteúdo' },
-    { value: 'MANUTENCAO', label: 'Manutenção & Suporte Web' },
-    { value: 'INTERNO', label: 'Projeto Interno da Agência' },
-    { value: 'OUTRO', label: 'Outro Serviço' },
-  ];
+    const nextProduct = activeProducts.find(product => product.id === type) || activeProducts[0];
+    if (nextProduct && nextProduct.id !== type) setType(nextProduct.id);
+    const nextStatuses = nextProduct?.statuses || [];
+    if (!nextStatuses.some(option => option.id === status)) setStatus(nextStatuses[0]?.id || '');
+  }, [activeProducts, clients, currentUser.id, currentUser.role, defaultClientId, isOpen, status, type]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !selectedClient) return;
+    if (!selectedProduct || !availableStatuses.some(option => option.id === status)) {
+      setError('Selecione um Tipo e um Status compatível.');
+      return;
+    }
 
     setError(null);
     setIsSubmitting(true);
@@ -181,11 +178,16 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
               </label>
               <select
                 value={type}
-                onChange={(e) => setType(e.target.value as ProjectType)}
+                onChange={(e) => {
+                  const productId = e.target.value;
+                  const product = activeProducts.find(option => option.id === productId);
+                  setType(productId);
+                  setStatus(product?.statuses?.[0]?.id || '');
+                }}
                 className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-sky-500"
               >
-                {projectTypeOptions.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                {activeProducts.map(product => (
+                  <option key={product.id} value={product.id}>{product.name}</option>
                 ))}
               </select>
             </div>

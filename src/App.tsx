@@ -1,22 +1,23 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Client, 
   NavView, 
   Notification, 
   Project, 
-  ProjectStatusDefinition,
+  ProductDefinition,
   RecurrenceRule,
   Task, 
   User 
 } from './types';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { OperationalViewProvider, useOperationalView } from './context/OperationalViewContext';
 import { LoginScreen } from './components/LoginScreen';
 import { clientService } from './services/clientService';
 import { projectService } from './services/projectService';
 import { userService } from './services/userService';
 import { taskService } from './services/taskService';
 import { routineService } from './services/routineService';
-import { isClosedProjectStatus, projectStatusService } from './services/projectStatusService';
+import { productService } from './services/productService';
 import { authService } from './services/authService';
 import { isAdministrator } from './permissions';
 
@@ -29,7 +30,8 @@ import { NewProjectModal } from './components/NewProjectModal';
 import { EditProjectModal } from './components/EditProjectModal';
 import { NewClientModal } from './components/NewClientModal';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
-import { ProjectStatusManager } from './components/ProjectStatusManager';
+import { ProductManager } from './components/ProductManager';
+import { isProjectCompleted } from './components/visualTokens';
 
 // Views
 import { DashboardView } from './views/DashboardView';
@@ -43,6 +45,7 @@ import { RecurrencesView } from './views/RecurrencesView';
 import { CalendarView } from './views/CalendarView';
 import { ProfileView } from './views/ProfileView';
 import { Loader2 } from 'lucide-react';
+import { getCompletedWorkflowStatus, getOpenWorkflowStatus, isTaskCompleted } from './components/visualTokens';
 
 const viewFromPath = (pathname: string): NavView => {
   if (pathname.startsWith('/routines')) return 'RECORRENCIAS';
@@ -61,7 +64,7 @@ const viewFromPath = (pathname: string): NavView => {
 
 function MainLayout() {
   const { user: authUser, isAuthenticated, isLoading: isAuthLoading } = useAuth();
-  const initialPathRef = useRef(window.location.pathname);
+  const { mode: operationalView, setMode: setOperationalView } = useOperationalView();
 
   // Navigation & Entity State
   const [currentView, setCurrentView] = useState<NavView>(() => viewFromPath(window.location.pathname));
@@ -71,7 +74,7 @@ function MainLayout() {
   const [clients, setClients] = useState<Client[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [routines, setRoutines] = useState<RecurrenceRule[]>([]);
-  const [projectStatuses, setProjectStatuses] = useState<ProjectStatusDefinition[]>([]);
+  const [products, setProducts] = useState<ProductDefinition[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [mutationError, setMutationError] = useState('');
   const [isLoadingData, setIsLoadingData] = useState(true);
@@ -112,31 +115,36 @@ function MainLayout() {
     if (!isAuthenticated) return;
     try {
       setIsLoadingData(true);
-      const [fetchedClients, fetchedProjects, fetchedUsers, activeTasks, completedTasks, fetchedRoutines, fetchedProjectStatuses] = await Promise.all([
+      const scopedView = authUser && isAdministrator(authUser.role) ? operationalView : undefined;
+      const [fetchedClients, fetchedProjects, fetchedUsers, activeTasks, completedTasks, fetchedRoutines, fetchedProducts] = await Promise.all([
         clientService.getAll(),
-        projectService.getAll(),
+        projectService.getAll({ operationalView: scopedView }),
         userService.getAll(),
-        taskService.getAll(),
-        taskService.getAll({ status: 'CONCLUIDO' }),
-        routineService.getAll(),
-        projectStatusService.getAll(Boolean(authUser && isAdministrator(authUser.role)))
+        taskService.getAll({ operationalView: scopedView }),
+        taskService.getAll({ operationalView: scopedView, completedOnly: true }),
+        routineService.getAll(scopedView),
+        productService.getCatalog()
       ]);
 
       setClients(fetchedClients);
-      setSelectedClient(fetchedClients[0] || null);
+      setSelectedClient(previous => previous ? fetchedClients.find(client => client.id === previous.id) || fetchedClients[0] || null : fetchedClients[0] || null);
       setProjects(fetchedProjects);
-      setSelectedProject(fetchedProjects[0] || null);
+      setSelectedProject(previous => previous ? fetchedProjects.find(project => project.id === previous.id) || null : fetchedProjects[0] || null);
       setUsers(fetchedUsers);
       const fetchedTasks = [...activeTasks, ...completedTasks];
       setTasks(fetchedTasks);
       setRoutines(fetchedRoutines);
-      setProjectStatuses(fetchedProjectStatuses);
+      setProducts(fetchedProducts);
 
-      const pathParts = initialPathRef.current.split('/').filter(Boolean);
-      if (pathParts[0] === 'projects' && pathParts[1]) setSelectedProject(fetchedProjects.find(project => project.id === pathParts[1]) || fetchedProjects[0] || null);
+      const pathParts = window.location.pathname.split('/').filter(Boolean);
+      if (pathParts[0] === 'projects' && pathParts[1]) {
+        const routedProject = fetchedProjects.find(project => project.id === pathParts[1]) || null;
+        setSelectedProject(routedProject);
+        if (!routedProject) setCurrentView('PROJETOS');
+      }
       if (pathParts[0] === 'clients' && pathParts[1]) setSelectedClient(fetchedClients.find(client => client.id === pathParts[1]) || fetchedClients[0] || null);
       if (pathParts[0] === 'tasks' && pathParts[1]) {
-        const routedTask = fetchedTasks.find(task => task.id === pathParts[1]) || await taskService.getById(pathParts[1]);
+        const routedTask = fetchedTasks.find(task => task.id === pathParts[1]) || await taskService.getById(pathParts[1], scopedView);
         if (routedTask) { setSelectedTask(routedTask); setRoutedTaskId(routedTask.id); setIsTaskDrawerOpen(true); }
       }
     } catch (err) {
@@ -145,12 +153,13 @@ function MainLayout() {
       setRouteHydrated(true);
       setIsLoadingData(false);
     }
-  }, [authUser, isAuthenticated]);
+  }, [authUser, isAuthenticated, operationalView]);
 
   const refreshRoutines = useCallback(async () => {
     if (!isAuthenticated) return;
-    setRoutines(await routineService.getAll());
-  }, [isAuthenticated]);
+    const scopedView = authUser && isAdministrator(authUser.role) ? operationalView : undefined;
+    setRoutines(await routineService.getAll(scopedView));
+  }, [authUser, isAuthenticated, operationalView]);
 
   useEffect(() => {
     loadData();
@@ -218,16 +227,27 @@ function MainLayout() {
     setIsTaskDrawerOpen(true);
   };
 
+  const syncOperationalTask = (task: Task) => {
+    if (!currentUser || operationalView !== 'operator') return;
+    const isAssigned = task.assignees?.some(assignee => assignee.id === currentUser.id) === true;
+    setTasks(previous => {
+      const withoutTask = previous.filter(item => item.id !== task.id);
+      return isAssigned ? [task, ...withoutTask] : withoutTask;
+    });
+  };
+
   // Handler: Update Task in backend & state
   const handleUpdateTask = async (updatedTask: Task) => {
     const previousTask = tasks.find(task => task.id === updatedTask.id);
     setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
+    syncOperationalTask(updatedTask);
     setSelectedTask(updatedTask);
 
     try {
       const persisted = await taskService.update(updatedTask.id, updatedTask);
       if (persisted) {
         setTasks(prev => prev.map(t => t.id === persisted.id ? persisted : t));
+        syncOperationalTask(persisted);
         setSelectedTask(persisted);
         await refreshRoutines();
       }
@@ -236,6 +256,7 @@ function MainLayout() {
       setMutationError(err instanceof Error ? err.message : 'Não foi possível salvar a tarefa.');
       if (previousTask) {
         setTasks(prev => prev.map(t => t.id === previousTask.id ? previousTask : t));
+        syncOperationalTask(previousTask);
         setSelectedTask(previousTask);
       }
     }
@@ -260,14 +281,25 @@ function MainLayout() {
     const currentTask = tasks.find(t => t.id === taskId);
     if (!currentTask) return;
 
-    const nextStatus = currentTask.status === 'CONCLUIDO' ? 'A_FAZER' : 'CONCLUIDO';
+    const nextDefinition = isTaskCompleted(currentTask)
+      ? getOpenWorkflowStatus(currentTask.workflowStatuses)
+      : getCompletedWorkflowStatus(currentTask.workflowStatuses);
+    if (!nextDefinition) {
+      setMutationError('O Produto deste projeto não possui um Status adequado para esta ação.');
+      return;
+    }
+    const nextStatus = nextDefinition.id;
     const updated = {
       ...currentTask,
       status: nextStatus,
-      completedAt: nextStatus === 'CONCLUIDO' ? new Date().toISOString() : undefined
+      statusName: nextDefinition.name,
+      statusColor: nextDefinition.color,
+      statusCompleted: nextDefinition.isCompleted,
+      completedAt: nextDefinition.isCompleted ? new Date().toISOString() : undefined
     };
 
     setTasks(prev => prev.map(t => t.id === taskId ? updated : t));
+    syncOperationalTask(updated);
     if (selectedTask?.id === taskId) {
       setSelectedTask(updated);
     }
@@ -275,11 +307,13 @@ function MainLayout() {
     try {
       const persisted = await taskService.update(taskId, { status: nextStatus });
       setTasks(prev => prev.map(t => t.id === taskId ? persisted : t));
+      syncOperationalTask(persisted);
       if (selectedTask?.id === taskId) setSelectedTask(persisted);
     } catch (err) {
       console.error('Erro ao alternar status da tarefa:', err);
       setMutationError(err instanceof Error ? err.message : 'Não foi possível alterar o status da tarefa.');
       setTasks(prev => prev.map(t => t.id === taskId ? currentTask : t));
+      syncOperationalTask(currentTask);
       if (selectedTask?.id === taskId) setSelectedTask(currentTask);
     }
   };
@@ -288,6 +322,7 @@ function MainLayout() {
   const handleAddTask = async (newTaskData: Task) => {
     const created = await taskService.create(newTaskData);
     setTasks(prev => [created, ...prev]);
+    syncOperationalTask(created);
     if (created.isRecurring) await refreshRoutines();
 
       // Notification
@@ -366,6 +401,16 @@ function MainLayout() {
       const saved = await projectService.update(project.id, data, teamUserIds);
       setProjects(previous => previous.map(item => item.id === saved.id ? saved : item));
       setSelectedProject(previous => previous?.id === saved.id ? saved : previous);
+      if (data.type && data.type !== project.type) {
+        const scopedView = authUser && isAdministrator(authUser.role) ? operationalView : undefined;
+        const [activeProjectTasks, completedProjectTasks] = await Promise.all([
+          taskService.getAll({ operationalView: scopedView }),
+          taskService.getAll({ operationalView: scopedView, completedOnly: true })
+        ]);
+        const refreshedTasks = [...activeProjectTasks, ...completedProjectTasks];
+        setTasks(refreshedTasks);
+        setSelectedTask(previous => previous ? refreshedTasks.find(task => task.id === previous.id) || null : null);
+      }
     } catch (error) {
       setProjects(previous => previous.map(item => item.id === project.id ? project : item));
       setSelectedProject(previous => previous?.id === project.id ? project : previous);
@@ -393,20 +438,13 @@ function MainLayout() {
 
   const handleRefreshSelectedProject = async () => {
     if (!selectedProject) return;
-    const saved = await projectService.getById(selectedProject.id);
+    const scopedView = authUser && isAdministrator(authUser.role) ? operationalView : undefined;
+    const saved = await projectService.getById(selectedProject.id, scopedView);
     setProjects(previous => previous.map(project => project.id === saved.id ? saved : project));
     setSelectedProject(saved);
   };
 
-  const handleProjectStatusesChanged = async () => {
-    const [statuses, refreshedProjects] = await Promise.all([
-      projectStatusService.getAll(isAdministrator(currentUser.role)),
-      projectService.getAll()
-    ]);
-    setProjectStatuses(statuses);
-    setProjects(refreshedProjects);
-    if (selectedProject) setSelectedProject(refreshedProjects.find(project => project.id === selectedProject.id) || null);
-  };
+  const refreshProductCatalog = async () => setProducts(await productService.getCatalog());
 
   const handleCreateUser = async (data: any) => {
     const created = await userService.create(data);
@@ -455,8 +493,9 @@ function MainLayout() {
 
   // Calculate overdue and today counts for badge alerts
   const todayStr = new Date().toISOString().slice(0, 10);
-  const activeTasks = tasks.filter(task => task.status !== 'CONCLUIDO');
-  const completedTasks = tasks.filter(task => task.status === 'CONCLUIDO');
+  const activeTasks = tasks.filter(task => !task.statusCompleted);
+  const completedTasks = tasks.filter(task => task.statusCompleted);
+  const workflowStatuses = products.flatMap(product => product.statuses || []);
   const overdueCount = activeTasks.filter(t => t.dueDate < todayStr).length;
   const todayCount = activeTasks.filter(t => t.dueDate === todayStr).length;
   const canCreateProject = currentUser.role !== 'COLABORADOR';
@@ -502,6 +541,8 @@ function MainLayout() {
           onMarkAllNotificationsRead={() => {
             setNotifications(prev => prev.map(n => ({ ...n, read: true })));
           }}
+          operationalView={operationalView}
+          onOperationalViewChange={setOperationalView}
         />
 
         {/* Dynamic Viewport Container */}
@@ -509,10 +550,11 @@ function MainLayout() {
           {currentView === 'DASHBOARD' && (
             <DashboardView
               currentUser={currentUser}
+              operationalView={operationalView}
               tasks={activeTasks}
               completedTasks={completedTasks}
               projects={projects}
-              projectStatuses={projectStatuses}
+              projectStatuses={workflowStatuses}
               clients={clients}
               users={users}
               onSelectTask={handleSelectTask}
@@ -549,7 +591,8 @@ function MainLayout() {
               currentUser={currentUser}
               onSelectProject={handleNavigateProjectDetail}
               onOpenNewProject={canCreateProject ? () => setIsNewProjectModalOpen(true) : undefined}
-              projectStatuses={projectStatuses}
+              projectStatuses={workflowStatuses}
+              products={products}
               onUpdateProject={handleInlineUpdateProject}
             />
           )}
@@ -569,7 +612,7 @@ function MainLayout() {
               onOpenEditProject={currentUser.role !== 'COLABORADOR' ? () => setIsEditProjectModalOpen(true) : undefined}
               onSaveBriefing={handleSaveBriefing}
               onProjectRefresh={handleRefreshSelectedProject}
-              projectStatuses={projectStatuses}
+              projectStatuses={workflowStatuses}
               onUpdateProject={handleInlineUpdateProject}
             />
           )}
@@ -588,7 +631,7 @@ function MainLayout() {
             <ClientDetailView
               client={selectedClient}
               currentUser={currentUser}
-              projectStatuses={projectStatuses}
+              projectStatuses={workflowStatuses}
               projects={projects}
               tasks={activeTasks}
               completedTasks={completedTasks}
@@ -663,7 +706,7 @@ function MainLayout() {
                   <span className="inline-block mt-3 px-2 py-1 bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[10px] font-bold rounded">Pronto para Produção / VPS</span>
                 </div>
               </div>
-              {isAdministrator(currentUser.role) && <ProjectStatusManager statuses={projectStatuses} onChanged={handleProjectStatusesChanged} />}
+              {isAdministrator(currentUser.role) && <ProductManager onCatalogChanged={refreshProductCatalog} />}
             </div>
           )}
 
@@ -683,7 +726,7 @@ function MainLayout() {
                 <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
                   <span className="text-xs text-zinc-400">Projetos em Andamento</span>
                   <p className="text-2xl font-black text-sky-400 mt-1">
-                    {projects.filter(project => !isClosedProjectStatus(project.status)).length}
+                    {projects.filter(project => !isProjectCompleted(project)).length}
                   </p>
                 </div>
                 <div className="p-4 rounded-xl bg-[#121216] border border-zinc-800">
@@ -744,7 +787,7 @@ function MainLayout() {
         users={users}
         currentUser={currentUser}
         defaultClientId={newProjectClientId}
-        projectStatuses={projectStatuses.filter(status => status.active)}
+        products={products}
       />
 
       {selectedProject && <EditProjectModal
@@ -755,7 +798,7 @@ function MainLayout() {
         clients={clients}
         users={users}
         currentUser={currentUser}
-        projectStatuses={projectStatuses}
+        products={products}
       />}
 
       <NewClientModal
@@ -788,7 +831,9 @@ function MainLayout() {
 export default function App() {
   return (
     <AuthProvider>
-      <MainLayout />
+      <OperationalViewProvider>
+        <MainLayout />
+      </OperationalViewProvider>
     </AuthProvider>
   );
 }

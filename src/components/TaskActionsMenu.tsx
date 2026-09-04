@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, ExternalLink, MoreHorizontal, RotateCcw } from 'lucide-react';
 import { Task } from '../types';
+import { isTaskCompleted } from './visualTokens';
 
 interface TaskActionsMenuProps {
   task: Task;
@@ -11,7 +12,7 @@ interface TaskActionsMenuProps {
 export const TaskActionsMenu: React.FC<TaskActionsMenuProps> = ({ task, onOpen, onToggleComplete }) => {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const completed = task.status === 'CONCLUIDO';
+  const completed = isTaskCompleted(task);
 
   useEffect(() => {
     const close = (event: MouseEvent) => {

@@ -29,7 +29,7 @@ import { UserAvatar } from './UserAvatar';
 import { AssigneePicker } from './AssigneePicker';
 import { PriorityPicker } from './PriorityPicker';
 import { StatusPicker } from './StatusPicker';
-import { TASK_STATUS_OPTIONS } from './visualTokens';
+import { getCompletedWorkflowStatus, getOpenWorkflowStatus, getWorkflowStatusOptions, isTaskCompleted } from './visualTokens';
 import { DateTimePicker } from './DateTimePicker';
 import { taskService } from '../services/taskService';
 import { InlineEditableField } from './InlineEditableField';
@@ -83,7 +83,10 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
   const [copiedLink, setCopiedLink] = useState(false);
   const [actionError, setActionError] = useState('');
 
-  const isCompleted = task.status === 'CONCLUIDO';
+  const isCompleted = isTaskCompleted(task);
+  const workflowStatusOptions = getWorkflowStatusOptions(task.workflowStatuses || [], { value: task.status, label: task.statusName, color: task.statusColor });
+  const completedWorkflowStatus = getCompletedWorkflowStatus(task.workflowStatuses);
+  const openWorkflowStatus = getOpenWorkflowStatus(task.workflowStatuses);
   const recurringSubtasksCount = task.subtasks.filter(s => s.isRecurring).length;
 
   // Toggle Subtask
@@ -92,7 +95,9 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
       setActionError('');
       const subtask = task.subtasks.find(item => item.id === subtaskId);
       if (!subtask) return;
-      const updated = await taskService.update(subtask.id, { status: subtask.completed || subtask.status === 'CONCLUIDO' ? 'A_FAZER' : 'CONCLUIDO' });
+      const targetStatus = subtask.completed || subtask.statusCompleted ? openWorkflowStatus : completedWorkflowStatus;
+      if (!targetStatus) throw new Error('O Produto não possui Status adequado para esta ação.');
+      const updated = await taskService.update(subtask.id, { status: targetStatus.id });
       onUpdateTask({ ...task, subtasks: task.subtasks.map(item => item.id === updated.id ? updated as unknown as Subtask : item) });
     } catch (error: any) { setActionError(error.message || 'Não foi possível atualizar a subtarefa.'); }
   };
@@ -132,7 +137,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
       const newSub = await taskService.createSubtask(task, {
         title: newSubtaskTitle.trim(), participantIds: selectedUser ? [selectedUser.id] : [currentUser.id],
         assigneeId: selectedUser?.id || currentUser.id, dueDate: subtaskDueDate, dueTime: subtaskDueTime,
-        status: 'A_FAZER', priority: 'NORMAL', description: ''
+        status: openWorkflowStatus?.id, priority: 'NORMAL', description: ''
       });
       if (isSubtaskRecurring) {
         const recurringSubtask = await taskService.setRecurrence(newSub.id, { frequency: subtaskFrequency, ruleText: subtaskRule });
@@ -161,9 +166,13 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
 
   // Change Status
   const handleStatusChange = (newStatus: TaskStatus) => {
+    const definition = task.workflowStatuses?.find(status => status.id === newStatus);
     onUpdateTask({
       ...task,
-      status: newStatus
+      status: newStatus,
+      statusName: definition?.name || task.statusName,
+      statusColor: definition?.color || task.statusColor,
+      statusCompleted: definition?.isCompleted ?? task.statusCompleted
     });
   };
 
@@ -242,7 +251,8 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
           {/* Main Title & Complete Toggle */}
           <div className="flex items-start gap-3">
             <button
-              onClick={() => handleStatusChange(isCompleted ? 'A_FAZER' : 'CONCLUIDO')}
+              disabled={!(isCompleted ? openWorkflowStatus : completedWorkflowStatus)}
+              onClick={() => { const target = isCompleted ? openWorkflowStatus : completedWorkflowStatus; if (target) handleStatusChange(target.id); }}
               className={`w-7 h-7 sm:w-6 sm:h-6 rounded-md flex-shrink-0 flex items-center justify-center border transition-colors mt-0.5 ${
                 isCompleted 
                   ? 'bg-emerald-500 border-emerald-500 text-black' 
@@ -265,7 +275,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                 <span className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
                 Status
               </span>
-              <StatusPicker value={task.status} options={TASK_STATUS_OPTIONS} onChange={status => handleStatusChange(status as TaskStatus)} ariaLabel="Alterar status da tarefa" />
+              <StatusPicker value={task.status} options={workflowStatusOptions} onChange={status => handleStatusChange(status as TaskStatus)} ariaLabel="Alterar status da tarefa" />
             </div>
 
             {/* Priority Selector */}

@@ -10,7 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { canManageTaskAssignments } from '../permissions';
 import { PriorityPicker } from './PriorityPicker';
 import { StatusPicker } from './StatusPicker';
-import { TASK_STATUS_OPTIONS } from './visualTokens';
+import { getCompletedWorkflowStatus, getOpenWorkflowStatus, getWorkflowStatusOptions } from './visualTokens';
 
 interface SubtaskListProps {
   parent: Task;
@@ -24,8 +24,11 @@ export const SubtaskList: React.FC<SubtaskListProps> = ({ parent, users, onParen
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
   const [error, setError] = useState('');
   const { user } = useAuth();
-  const available = showCompleted ? parent.subtasks : parent.subtasks.filter(subtask => !subtask.completed && subtask.status !== 'CONCLUIDO');
-  const completedCount = parent.subtasks.length - parent.subtasks.filter(subtask => !subtask.completed && subtask.status !== 'CONCLUIDO').length;
+  const available = showCompleted ? parent.subtasks : parent.subtasks.filter(subtask => !subtask.completed && !subtask.statusCompleted);
+  const completedCount = parent.subtasks.length - parent.subtasks.filter(subtask => !subtask.completed && !subtask.statusCompleted).length;
+  const statusOptions = getWorkflowStatusOptions(parent.workflowStatuses || []);
+  const completedStatus = getCompletedWorkflowStatus(parent.workflowStatuses);
+  const openStatus = getOpenWorkflowStatus(parent.workflowStatuses);
 
   const merge = (subtask: Task) => onParentUpdate({ ...parent, subtasks: parent.subtasks.map(item => item.id === subtask.id ? ({ ...item, ...subtask } as Subtask) : item) });
   const update = async (subtask: Subtask, changes: Partial<Task>) => {
@@ -44,7 +47,7 @@ export const SubtaskList: React.FC<SubtaskListProps> = ({ parent, users, onParen
       const created = await taskService.createSubtask(parent, {
         title: title.trim(), dueDate: parent.dueDate, dueTime: parent.dueTime,
         participantIds, assigneeId: participantIds[0],
-        status: 'A_FAZER', priority: 'NORMAL', description: ''
+        status: openStatus?.id, priority: 'NORMAL', description: ''
       });
       onParentUpdate({ ...parent, subtasks: [...parent.subtasks, created as unknown as Subtask] });
       setTitle('');
@@ -56,16 +59,16 @@ export const SubtaskList: React.FC<SubtaskListProps> = ({ parent, users, onParen
       {error && <p className="mx-10 mt-2 rounded border border-rose-500/30 bg-rose-500/10 px-2 py-1.5 text-[10px] text-rose-300">{error}</p>}
       {available.map(subtask => {
         const expanded = expandedIds.includes(subtask.id);
-        const complete = subtask.completed || subtask.status === 'CONCLUIDO';
+        const complete = subtask.completed || Boolean(subtask.statusCompleted);
         return (
           <div key={subtask.id} className="border-t border-zinc-800/70 first:border-t-0">
             <div className="group/sub flex min-h-9 items-center gap-2 py-1.5 pl-5 pr-2">
               <button type="button" onClick={() => setExpandedIds(ids => expanded ? ids.filter(id => id !== subtask.id) : [...ids, subtask.id])} className="text-zinc-600 hover:text-zinc-300">{expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</button>
-              <button type="button" onClick={() => void update(subtask, { status: complete ? 'A_FAZER' : 'CONCLUIDO' })} className={`flex h-4 w-4 items-center justify-center rounded-full border ${complete ? 'border-emerald-500 bg-emerald-500 text-black' : 'border-zinc-600'}`}>{complete && <Check size={9} strokeWidth={3} />}</button>
+              <button type="button" disabled={!(complete ? openStatus : completedStatus)} onClick={() => { const next = complete ? openStatus : completedStatus; if (next) void update(subtask, { status: next.id }); }} className={`flex h-4 w-4 items-center justify-center rounded-full border ${complete ? 'border-emerald-500 bg-emerald-500 text-black' : 'border-zinc-600'}`}>{complete && <Check size={9} strokeWidth={3} />}</button>
               <InlineEditableField value={subtask.title} onSave={value => update(subtask, { title: value })} className={`min-w-0 flex-1 truncate text-left text-xs font-medium ${complete ? 'text-zinc-600 line-through' : 'text-zinc-200'}`} />
               <AssigneePicker users={users} selectedIds={subtask.participantIds || (subtask.assigneeId ? [subtask.assigneeId] : [])} selectedAssignees={subtask.assignees} onChange={ids => void update(subtask, { participantIds: ids })} label="" />
               <div onClick={event => event.stopPropagation()}><PriorityPicker value={subtask.priority || 'NORMAL'} onChange={priority => void update(subtask, { priority })} /></div>
-              <div onClick={event => event.stopPropagation()}><StatusPicker value={subtask.status || (complete ? 'CONCLUIDO' : 'A_FAZER')} options={TASK_STATUS_OPTIONS} onChange={status => void update(subtask, { status: status as TaskStatus })} ariaLabel={`Alterar status de ${subtask.title}`} /></div>
+              <div onClick={event => event.stopPropagation()}><StatusPicker value={subtask.status || openStatus?.id || ''} options={statusOptions} onChange={status => void update(subtask, { status: status as TaskStatus })} ariaLabel={`Alterar status de ${subtask.title}`} /></div>
               <DateTimePicker value={subtask.dueDate} time={subtask.dueTime} compact onChange={(date, time) => void update(subtask, { dueDate: date, dueTime: time })} />
               <button type="button" onClick={() => void taskService.delete(subtask.id).then(() => onParentUpdate({ ...parent, subtasks: parent.subtasks.filter(item => item.id !== subtask.id) })).catch(actionError => setError(actionError.message || 'Não foi possível excluir a subtarefa.'))} className="opacity-0 text-zinc-600 hover:text-rose-400 group-hover/sub:opacity-100"><Trash2 size={12} /></button>
             </div>

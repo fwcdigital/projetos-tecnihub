@@ -29,7 +29,8 @@ import { Pencil, Save } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 import { projectService } from '../services/projectService';
 import { canManageProjectOperations } from '../permissions';
-import { getProjectStatusOptions } from '../components/visualTokens';
+import { getWorkflowStatusOptions } from '../components/visualTokens';
+import { useOperationalView } from '../context/OperationalViewContext';
 
 interface ProjectDetailViewProps {
   project: Project;
@@ -66,6 +67,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   projectStatuses,
   onUpdateProject
 }) => {
+  const { mode: operationalView } = useOperationalView();
   const [activeTab, setActiveTab] = useState<'ALL' | 'TODO' | 'PROGRESS' | 'DOCS'>('ALL');
   const [briefing, setBriefing] = useState<Record<string, string>>({});
   const [savingBriefing, setSavingBriefing] = useState(false);
@@ -87,16 +89,22 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
   const projectTasks = tasks.filter(t => t.projectId === project.id);
   const projectCompletedTasks = completedTasks.filter(t => t.projectId === project.id);
+  const orderedWorkflow = [...(project.workflowStatuses || [])].sort((left, right) => left.position - right.position);
+  const initialStatusId = orderedWorkflow.find(status => !status.isCompleted)?.id;
+  const isInitialTask = (task: Task) => task.status === initialStatusId;
   
   const filteredTasks = projectTasks.filter(t => {
-    if (activeTab === 'TODO') return t.status === 'A_FAZER' || t.status === 'BACKLOG';
-    if (activeTab === 'PROGRESS') return t.status === 'EM_ANDAMENTO' || t.status === 'AGUARDANDO_CLIENTE' || t.status === 'EM_REVISAO';
+    if (activeTab === 'TODO') return isInitialTask(t);
+    if (activeTab === 'PROGRESS') return !isInitialTask(t);
     return true;
   });
 
   const completedCount = projectCompletedTasks.length;
   const totalTaskCount = projectTasks.length + completedCount;
-  const overdueCount = projectTasks.filter(t => t.dueDate < new Date().toISOString().slice(0, 10) && t.status !== 'CONCLUIDO').length;
+  const visibleProgress = operationalView === 'operator'
+    ? (totalTaskCount > 0 ? Math.round((completedCount / totalTaskCount) * 100) : 0)
+    : project.progress;
+  const overdueCount = projectTasks.filter(t => t.dueDate < new Date().toISOString().slice(0, 10)).length;
 
   return (
     <div className="mx-auto max-w-[1800px] space-y-6 p-4 animate-in fade-in duration-150 sm:p-6">
@@ -124,7 +132,11 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 text-xs font-medium border border-zinc-700">
                 {project.clientName}
               </span>
-              <StatusPicker value={project.status} options={getProjectStatusOptions(projectStatuses, { value: project.status, label: project.statusName, color: project.statusColor })} onChange={canManageProject ? status => void onUpdateProject(project, { status }) : undefined} ariaLabel={`Alterar status de ${project.name}`} />
+              <span className="inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs font-medium" style={{ borderColor: `${project.typeColor || '#71717a'}66`, backgroundColor: `${project.typeColor || '#71717a'}18`, color: project.typeColor || '#d4d4d8' }}>
+                <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: project.typeColor || '#71717a' }} />
+                {project.typeName || project.type}
+              </span>
+              <StatusPicker value={project.status} options={getWorkflowStatusOptions(project.workflowStatuses || [], { value: project.status, label: project.statusName, color: project.statusColor })} onChange={canManageProject ? status => void onUpdateProject(project, { status }) : undefined} ariaLabel={`Alterar status de ${project.name}`} />
               <PriorityPicker value={project.priority} onChange={canManageProject ? priority => void onUpdateProject(project, { priority }) : undefined} />
               {project.isRecurring && (
                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[10px] border border-emerald-500/20 font-medium">
@@ -145,7 +157,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
           {/* Quick Metrics in Header */}
           <div className="flex items-center gap-4 bg-zinc-900/80 p-3 rounded-xl border border-zinc-800 self-start md:self-auto">
             <div className="text-center px-2">
-              <span className="block text-lg font-black text-white font-mono">{project.progress}%</span>
+              <span className="block text-lg font-black text-white font-mono">{visibleProgress}%</span>
               <span className="text-[10px] uppercase font-bold text-zinc-500">Concluído</span>
             </div>
             <div className="w-px h-8 bg-zinc-800" />
@@ -208,7 +220,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               activeTab === 'TODO' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            A Fazer ({projectTasks.filter(t => t.status === 'A_FAZER' || t.status === 'BACKLOG').length})
+            {orderedWorkflow.find(status => status.id === initialStatusId)?.name || 'Iniciais'} ({projectTasks.filter(isInitialTask).length})
           </button>
           <button
             onClick={() => setActiveTab('PROGRESS')}
@@ -216,7 +228,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               activeTab === 'PROGRESS' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            Em Andamento ({projectTasks.filter(t => t.status === 'EM_ANDAMENTO' || t.status === 'EM_REVISAO').length})
+            Em execução ({projectTasks.filter(t => !isInitialTask(t)).length})
           </button>
           <button
             onClick={() => setActiveTab('DOCS')}

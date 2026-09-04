@@ -144,7 +144,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                       <PriorityBadge priority={task.priority} size="sm" />
                       <div className="min-w-0">
                         <p className={`text-xs font-semibold text-zinc-200 truncate ${
-                          task.status === 'CONCLUIDO' ? 'line-through text-zinc-500' : ''
+                          task.statusCompleted ? 'line-through text-zinc-500' : ''
                         }`}>
                           {task.title}
                         </p>
@@ -161,7 +161,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                           {task.dueTime}
                         </span>
                       )}
-                      <StatusBadge status={task.status} />
+                      <StatusBadge status={task.status} label={task.statusName} color={task.statusColor} />
                     </div>
                   </div>
                 ))}
@@ -223,7 +223,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                         key={task.id}
                         onClick={() => onSelectTask(task)}
                         className={`p-1 rounded text-[9px] sm:text-[10px] truncate cursor-pointer transition-all border flex items-center gap-1 ${
-                          task.status === 'CONCLUIDO'
+                          task.statusCompleted
                             ? 'bg-zinc-800/60 text-zinc-500 border-zinc-700/40 line-through'
                             : task.priority === 'URGENTE'
                               ? 'bg-rose-950/60 text-rose-300 border-rose-800/60'
