@@ -41,6 +41,24 @@ export interface DbClient {
   updated_at: string;
 }
 
+export interface ClientDeletionDependencies {
+  projects: number;
+  tasks: number;
+  projectMembers: number;
+  projectResources: number;
+  taskAssignees: number;
+  taskComments: number;
+  checklistItems: number;
+  recurrenceRules: number;
+}
+
+export interface ClientPermanentDeletionResult {
+  deleted: boolean;
+  snapshotId?: string;
+  dependencies: ClientDeletionDependencies;
+  storagePaths: string[];
+}
+
 export interface DbProject {
   id: string;
   name: string;
@@ -477,7 +495,8 @@ export const clientRepository = {
     }
 
     const result = await getPool().query(
-      `SELECT c.* FROM clients c
+      `SELECT c.*, lead.name AS lead_manager_name FROM clients c
+       LEFT JOIN users lead ON lead.id = c.lead_manager_id
        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
        ORDER BY c.created_at DESC`,
       values
@@ -499,7 +518,13 @@ export const clientRepository = {
           )
       )`);
     }
-    const result = await getPool().query(`SELECT c.* FROM clients c WHERE ${where.join(' AND ')}`, values);
+    const result = await getPool().query(
+      `SELECT c.*, lead.name AS lead_manager_name
+       FROM clients c
+       LEFT JOIN users lead ON lead.id = c.lead_manager_id
+       WHERE ${where.join(' AND ')}`,
+      values
+    );
     return result.rowCount ? normalizeClient(result.rows[0]) : null;
   },
 
@@ -535,10 +560,129 @@ export const clientRepository = {
       `UPDATE clients SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING *`,
       values
     );
-    return result.rowCount ? normalizeClient(result.rows[0]) : null;
+    return result.rowCount ? clientRepository.findById(id) : null;
   },
 
-  archive: async (id: string): Promise<DbClient | null> => clientRepository.update(id, { status: 'ARCHIVED' })
+  setStatus: async (id: string, status: Extract<ClientStatus, 'ACTIVE' | 'INACTIVE'>): Promise<DbClient | null> => (
+    clientRepository.update(id, { status })
+  ),
+
+  getDeletionDependencies: async (id: string): Promise<ClientDeletionDependencies> => {
+    const result = await getPool().query(
+      `SELECT
+         (SELECT COUNT(*)::integer FROM projects WHERE client_id = $1) AS projects,
+         (SELECT COUNT(*)::integer FROM tasks task INNER JOIN projects project ON project.id = task.project_id WHERE project.client_id = $1) AS tasks,
+         (SELECT COUNT(*)::integer FROM project_members member INNER JOIN projects project ON project.id = member.project_id WHERE project.client_id = $1) AS project_members,
+         (SELECT COUNT(*)::integer FROM project_resources resource INNER JOIN projects project ON project.id = resource.project_id WHERE project.client_id = $1) AS project_resources,
+         (SELECT COUNT(*)::integer FROM task_assignees assignee INNER JOIN tasks task ON task.id = assignee.task_id INNER JOIN projects project ON project.id = task.project_id WHERE project.client_id = $1) AS task_assignees,
+         (SELECT COUNT(*)::integer FROM task_comments comment_item INNER JOIN tasks task ON task.id = comment_item.task_id INNER JOIN projects project ON project.id = task.project_id WHERE project.client_id = $1) AS task_comments,
+         (SELECT COUNT(*)::integer FROM checklist_items checklist INNER JOIN tasks task ON task.id = checklist.task_id INNER JOIN projects project ON project.id = task.project_id WHERE project.client_id = $1) AS checklist_items,
+         (SELECT COUNT(*)::integer FROM recurrence_rules recurrence INNER JOIN tasks task ON task.id = recurrence.source_task_id INNER JOIN projects project ON project.id = task.project_id WHERE project.client_id = $1) AS recurrence_rules`,
+      [id]
+    );
+    const row = result.rows[0] || {};
+    return {
+      projects: Number(row.projects || 0),
+      tasks: Number(row.tasks || 0),
+      projectMembers: Number(row.project_members || 0),
+      projectResources: Number(row.project_resources || 0),
+      taskAssignees: Number(row.task_assignees || 0),
+      taskComments: Number(row.task_comments || 0),
+      checklistItems: Number(row.checklist_items || 0),
+      recurrenceRules: Number(row.recurrence_rules || 0)
+    };
+  },
+
+  deletePermanent: async (id: string, deletedBy: string): Promise<ClientPermanentDeletionResult> => {
+    return withTransaction(async transaction => {
+      const clientResult = await transaction.query('SELECT * FROM clients WHERE id = $1 FOR UPDATE', [id]);
+      const emptyDependencies: ClientDeletionDependencies = {
+        projects: 0,
+        tasks: 0,
+        projectMembers: 0,
+        projectResources: 0,
+        taskAssignees: 0,
+        taskComments: 0,
+        checklistItems: 0,
+        recurrenceRules: 0
+      };
+      if (!clientResult.rowCount) return { deleted: false, dependencies: emptyDependencies, storagePaths: [] };
+
+      const projects = await transaction.query('SELECT * FROM projects WHERE client_id = $1 ORDER BY created_at', [id]);
+      const projectMembers = await transaction.query(
+        'SELECT member.* FROM project_members member INNER JOIN projects project ON project.id = member.project_id WHERE project.client_id = $1 ORDER BY member.created_at',
+        [id]
+      );
+      const projectResources = await transaction.query(
+        'SELECT resource.* FROM project_resources resource INNER JOIN projects project ON project.id = resource.project_id WHERE project.client_id = $1 ORDER BY resource.created_at',
+        [id]
+      );
+      const tasks = await transaction.query(
+        'SELECT task.* FROM tasks task INNER JOIN projects project ON project.id = task.project_id WHERE project.client_id = $1 ORDER BY task.created_at',
+        [id]
+      );
+      const taskAssignees = await transaction.query(
+        'SELECT assignee.* FROM task_assignees assignee INNER JOIN tasks task ON task.id = assignee.task_id INNER JOIN projects project ON project.id = task.project_id WHERE project.client_id = $1 ORDER BY assignee.created_at',
+        [id]
+      );
+      const checklistItems = await transaction.query(
+        'SELECT checklist.* FROM checklist_items checklist INNER JOIN tasks task ON task.id = checklist.task_id INNER JOIN projects project ON project.id = task.project_id WHERE project.client_id = $1 ORDER BY checklist.created_at',
+        [id]
+      );
+      const taskComments = await transaction.query(
+        'SELECT comment_item.* FROM task_comments comment_item INNER JOIN tasks task ON task.id = comment_item.task_id INNER JOIN projects project ON project.id = task.project_id WHERE project.client_id = $1 ORDER BY comment_item.created_at',
+        [id]
+      );
+      const recurrenceRules = await transaction.query(
+        'SELECT recurrence.* FROM recurrence_rules recurrence INNER JOIN tasks task ON task.id = recurrence.source_task_id INNER JOIN projects project ON project.id = task.project_id WHERE project.client_id = $1 ORDER BY recurrence.created_at',
+        [id]
+      );
+
+      const dependencies: ClientDeletionDependencies = {
+        projects: projects.rows.length,
+        tasks: tasks.rows.length,
+        projectMembers: projectMembers.rows.length,
+        projectResources: projectResources.rows.length,
+        taskAssignees: taskAssignees.rows.length,
+        taskComments: taskComments.rows.length,
+        checklistItems: checklistItems.rows.length,
+        recurrenceRules: recurrenceRules.rows.length
+      };
+      const snapshot = {
+        client: clientResult.rows[0],
+        projects: projects.rows,
+        projectMembers: projectMembers.rows,
+        projectResources: projectResources.rows,
+        tasks: tasks.rows,
+        taskAssignees: taskAssignees.rows,
+        checklistItems: checklistItems.rows,
+        taskComments: taskComments.rows,
+        recurrenceRules: recurrenceRules.rows
+      };
+      const snapshotResult = await transaction.query<{ id: string }>(
+        `INSERT INTO deleted_client_snapshots (original_client_id, client_name, deleted_by, snapshot)
+         VALUES ($1, $2, $3, $4::jsonb)
+         RETURNING id`,
+        [id, clientResult.rows[0].name, deletedBy, JSON.stringify(snapshot)]
+      );
+
+      // As FKs de composição removem apenas os registros pertencentes aos projetos/tarefas excluídos.
+      await transaction.query('DELETE FROM projects WHERE client_id = $1', [id]);
+      const deletedClient = await transaction.query('DELETE FROM clients WHERE id = $1', [id]);
+      if (!deletedClient.rowCount) throw new Error('Falha ao excluir o cliente dentro da transação.');
+
+      return {
+        deleted: true,
+        snapshotId: snapshotResult.rows[0].id,
+        dependencies,
+        storagePaths: projectResources.rows
+          .map(resource => resource.storage_path)
+          .filter((storagePath): storagePath is string => Boolean(storagePath))
+      };
+    });
+  },
+
+  archive: async (id: string): Promise<DbClient | null> => clientRepository.setStatus(id, 'INACTIVE')
 };
 
 function normalizeProjectStatus(row: any): DbProjectStatus {

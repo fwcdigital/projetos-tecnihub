@@ -230,6 +230,7 @@ export interface Client {
   leadManagerName: string;
   teamMembers: string[];
   statusRelationship: 'ATIVO' | 'ONBOARDING' | 'EM_RENOVACAO' | 'PAUSADO';
+  accountStatus?: 'ACTIVE' | 'INACTIVE';
   notes: string;
   monthlyServices: string[];
   createdAt: string;

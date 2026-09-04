@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 interface UserAvatarProps {
   name: string;
@@ -8,9 +8,10 @@ interface UserAvatarProps {
 }
 
 export const UserAvatar: React.FC<UserAvatarProps> = ({ name, src, className = 'w-7 h-7', title }) => {
+  const [failedSrc, setFailedSrc] = useState('');
   const initials = name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase() || '?';
-  if (src) {
-    return <img src={src} alt={name} title={title || name} className={`${className} rounded-full object-cover border border-zinc-700`} />;
+  if (src && failedSrc !== src) {
+    return <img src={src} alt={name} title={title || name} onError={() => setFailedSrc(src)} className={`${className} shrink-0 rounded-full border border-zinc-700 object-cover`} />;
   }
   return (
     <span

@@ -87,7 +87,7 @@ test('migrations criam o núcleo e tarefas no PostgreSQL com integridade e RLS',
     );
     assert.deepEqual(
       tables.rows.map(row => row.table_name),
-      ['checklist_items', 'clients', 'product_statuses', 'products', 'project_members', 'project_resources', 'project_statuses', 'projects', 'recurrence_rules', 'schema_migrations', 'task_assignees', 'task_comments', 'tasks', 'users']
+      ['checklist_items', 'clients', 'deleted_client_snapshots', 'product_statuses', 'products', 'project_members', 'project_resources', 'project_statuses', 'projects', 'recurrence_rules', 'schema_migrations', 'task_assignees', 'task_comments', 'tasks', 'users']
     );
 
     const products = await database.query<{ id: string; name: string; position: number }>(
@@ -157,9 +157,9 @@ test('migrations criam o núcleo e tarefas no PostgreSQL com integridade e RLS',
     const rls = await database.query<{ relname: string; relrowsecurity: boolean }>(
       `SELECT relname, relrowsecurity
        FROM pg_class
-       WHERE relname IN ('users', 'clients', 'products', 'product_statuses', 'projects', 'project_members', 'project_statuses', 'tasks', 'task_assignees', 'task_comments', 'checklist_items', 'project_resources', 'recurrence_rules')`
+       WHERE relname IN ('users', 'clients', 'deleted_client_snapshots', 'products', 'product_statuses', 'projects', 'project_members', 'project_statuses', 'tasks', 'task_assignees', 'task_comments', 'checklist_items', 'project_resources', 'recurrence_rules')`
     );
-    assert.equal(rls.rows.length, 13);
+    assert.equal(rls.rows.length, 14);
     assert.ok(rls.rows.every(row => row.relrowsecurity));
   } finally {
     await database.close();

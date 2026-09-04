@@ -18,6 +18,7 @@ import {
 import { TecnihubLogo } from './TecnihubLogo';
 import { User, NavView } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { UserAvatar } from './UserAvatar';
 export type { NavView } from '../types';
 
 interface SidebarProps {
@@ -280,11 +281,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className={`mt-2 pt-2 border-t border-zinc-800/60 flex items-center justify-between ${collapsed ? 'md:px-1' : 'px-2'}`}>
             <div className="flex items-center gap-2.5 overflow-hidden">
               <div className="relative flex-shrink-0">
-                <img
-                  src={currentUser.avatar}
-                  alt={currentUser.name}
-                  className="w-8 h-8 md:w-7 md:h-7 rounded-full object-cover border border-zinc-700"
-                />
+                <UserAvatar name={currentUser.name} src={currentUser.avatar} className="h-8 w-8 md:h-7 md:w-7" />
                 <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-emerald-500 border border-[#0d0d10]" />
               </div>
 

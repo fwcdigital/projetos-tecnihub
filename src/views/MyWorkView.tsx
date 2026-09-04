@@ -26,6 +26,7 @@ import {
 import { StatusBadge } from '../components/StatusBadge';
 import { PriorityBadge } from '../components/PriorityBadge';
 import { GroupHeader, GroupedSections, GroupingSwitcher, groupTasks, usePersistentGrouping } from '../components/GroupingSwitcher';
+import { UserAvatar } from '../components/UserAvatar';
 
 interface MyWorkViewProps {
   currentUser: User;
@@ -492,7 +493,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                   <td className="p-3 text-zinc-400">{task.projectName}</td>
                   <td className="p-3">
                     <div className="flex items-center gap-1.5">
-                      <img src={task.assigneeAvatar} alt="" className="w-5 h-5 rounded-full object-cover" />
+                      <UserAvatar name={task.assigneeName} src={task.assigneeAvatar} className="h-5 w-5" />
                       <span className="text-zinc-200">{task.assigneeName.split(' ')[0]}</span>
                     </div>
                   </td>
@@ -538,7 +539,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                       <p className="text-xs font-medium text-zinc-100">{task.title}</p>
                       <div className="flex items-center justify-between pt-1 border-t border-zinc-800/80 text-[10px] text-zinc-400">
                         <span>{task.dueDate.split('-').reverse().slice(0, 2).join('/')}</span>
-                        <img src={task.assigneeAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
+                        <UserAvatar name={task.assigneeName} src={task.assigneeAvatar} className="h-4 w-4" />
                       </div>
                     </div>
                   ))}

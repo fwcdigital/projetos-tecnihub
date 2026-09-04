@@ -1,4 +1,7 @@
-import { Router, Response } from 'express';
+import express, { Router, Response } from 'express';
+import { randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import { userRepository, UserRole } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
@@ -7,6 +10,157 @@ import { canManageUsers } from '../permissions.js';
 
 export const userRouter = Router();
 const USER_ROLES: UserRole[] = ['SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER', 'COLLABORATOR'];
+const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
+const avatarBodyParser = express.raw({ type: () => true, limit: AVATAR_MAX_BYTES });
+
+function storageConfig() {
+  const url = process.env.SUPABASE_URL?.replace(/\/$/, '');
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const bucket = process.env.SUPABASE_AVATAR_BUCKET || process.env.SUPABASE_STORAGE_BUCKET || 'project-resources';
+  return url && key ? { url, key, bucket } : null;
+}
+
+function encodedStoragePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
+function localAvatarPath(userId: string): string {
+  const storageRoot = process.env.LOCAL_STORAGE_DIR?.trim()
+    ? path.resolve(process.env.LOCAL_STORAGE_DIR.trim())
+    : path.resolve(process.cwd(), 'storage');
+  return path.join(storageRoot, 'avatars', userId);
+}
+
+function isAvatarPayload(buffer: Buffer, mimeType: string): boolean {
+  if (mimeType === 'image/jpeg') return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  if (mimeType === 'image/png') return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (mimeType === 'image/webp') return buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP';
+  return false;
+}
+
+function mayChangeAvatar(req: AuthRequest, target: Awaited<ReturnType<typeof userRepository.findById>>): boolean {
+  if (!req.user || !target) return false;
+  if (req.user.id === target.id) return true;
+  if (!canManageUsers(req.user)) return false;
+  return target.role !== 'SUPER_ADMIN' || req.user.role === 'SUPER_ADMIN';
+}
+
+function parseAvatarBody(req: AuthRequest, res: Response, next: (error?: unknown) => void) {
+  avatarBodyParser(req, res, error => {
+    if ((error as any)?.type === 'entity.too.large') {
+      return res.status(413).json({ error: 'A imagem deve possuir no máximo 5 MB.' });
+    }
+    return next(error);
+  });
+}
+
+// GET /api/users/:id/avatar - Proxy estável para o bucket privado de avatares
+userRouter.get('/:id/avatar', async (req: AuthRequest, res: Response) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).end();
+    const config = storageConfig();
+    let bytes: Buffer;
+    let contentType: string;
+    if (config) {
+      const storagePath = `avatars/${req.params.id}`;
+      const download = await fetch(`${config.url}/storage/v1/object/authenticated/${config.bucket}/${encodedStoragePath(storagePath)}`, {
+        headers: { Authorization: `Bearer ${config.key}`, apikey: config.key }
+      });
+      if (!download.ok) return res.status(download.status === 404 ? 404 : 502).end();
+      bytes = Buffer.from(await download.arrayBuffer());
+      contentType = download.headers.get('content-type') || 'application/octet-stream';
+    } else {
+      try {
+        bytes = await fs.readFile(localAvatarPath(req.params.id));
+      } catch (error: any) {
+        if (error?.code === 'ENOENT') return res.status(404).end();
+        throw error;
+      }
+      contentType = AVATAR_TYPES.find(type => isAvatarPayload(bytes, type)) || 'application/octet-stream';
+    }
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    return res.send(bytes);
+  } catch {
+    return res.status(502).end();
+  }
+});
+
+// PUT /api/users/:id/avatar - Próprio usuário ou administradores autorizados
+userRouter.put('/:id/avatar', authenticateToken, parseAvatarBody, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    const target = await userRepository.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    if (!mayChangeAvatar(req, target)) return res.status(403).json({ error: 'Você não tem permissão para alterar esta foto.' });
+
+    const mimeType = String(req.headers['content-type'] || '').split(';')[0].toLowerCase();
+    if (!AVATAR_TYPES.includes(mimeType)) return res.status(415).json({ error: 'Envie uma imagem JPG, PNG ou WEBP.' });
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0 || !isAvatarPayload(req.body, mimeType)) {
+      return res.status(415).json({ error: 'O conteúdo enviado não corresponde a uma imagem válida.' });
+    }
+
+    const config = storageConfig();
+    if (config) {
+      const storagePath = `avatars/${target.id}`;
+      const upload = await fetch(`${config.url}/storage/v1/object/${config.bucket}/${encodedStoragePath(storagePath)}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${config.key}`,
+          apikey: config.key,
+          'Content-Type': mimeType,
+          'x-upsert': 'true'
+        },
+        body: req.body
+      });
+      if (!upload.ok) return res.status(502).json({ error: 'Não foi possível enviar a imagem para o armazenamento.' });
+    } else {
+      const destination = localAvatarPath(target.id);
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      await fs.writeFile(destination, req.body);
+    }
+
+    const avatar = `/api/users/${target.id}/avatar?v=${randomUUID()}`;
+    const updated = await userRepository.update(target.id, { avatar });
+    return res.json({ message: 'Foto atualizada com sucesso.', user: updated });
+  } catch (error) {
+    console.error('Erro ao atualizar avatar:', error);
+    return res.status(500).json({ error: 'Erro ao atualizar a foto do usuário.' });
+  }
+});
+
+// DELETE /api/users/:id/avatar - Remover foto e voltar às iniciais
+userRouter.delete('/:id/avatar', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    const target = await userRepository.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    if (!mayChangeAvatar(req, target)) return res.status(403).json({ error: 'Você não tem permissão para remover esta foto.' });
+
+    if (target.avatar.startsWith(`/api/users/${target.id}/avatar`)) {
+      const config = storageConfig();
+      if (config) {
+        const storagePath = `avatars/${target.id}`;
+        const removal = await fetch(`${config.url}/storage/v1/object/${config.bucket}/${encodedStoragePath(storagePath)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${config.key}`, apikey: config.key }
+        });
+        if (!removal.ok && removal.status !== 404) {
+          return res.status(502).json({ error: 'Não foi possível remover a imagem do armazenamento.' });
+        }
+      } else {
+        await fs.rm(localAvatarPath(target.id), { force: true });
+      }
+    }
+
+    const updated = await userRepository.update(target.id, { avatar: '' });
+    return res.json({ message: 'Foto removida. O avatar padrão foi restaurado.', user: updated });
+  } catch (error) {
+    console.error('Erro ao remover avatar:', error);
+    return res.status(500).json({ error: 'Erro ao remover a foto do usuário.' });
+  }
+});
 
 // GET /api/users - Listar usuários
 userRouter.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
@@ -107,7 +261,7 @@ userRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), a
       name: name.trim(),
       email: email.trim().toLowerCase(),
       password_hash,
-      avatar: avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=10b981&color=fff`,
+      avatar: avatar || '',
       role: role as UserRole,
       job_title: job_title || 'Especialista',
       status

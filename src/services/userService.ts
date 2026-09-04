@@ -1,4 +1,4 @@
-import { api } from './api';
+import { api, getStoredToken } from './api';
 import { User, UserRole } from '../types';
 
 const roleMapToFrontend: Record<string, UserRole> = {
@@ -31,6 +31,21 @@ export function formatUserFromBackend(u: any): User {
     status: u.status === 'ACTIVE' ? 'ONLINE' : 'OFFLINE',
     accountStatus: u.status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE'
   };
+}
+
+async function avatarRequest(id: string, method: 'PUT' | 'DELETE', file?: File): Promise<User> {
+  const token = getStoredToken();
+  const response = await fetch(`/api/users/${id}/avatar`, {
+    method,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(file ? { 'Content-Type': file.type } : {})
+    },
+    body: file
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `Não foi possível atualizar a foto (HTTP ${response.status}).`);
+  return formatUserFromBackend(data.user);
 }
 
 export const userService = {
@@ -67,6 +82,10 @@ export const userService = {
     const res = await api.put<{ user: any }>(`/api/users/${id}`, payload);
     return formatUserFromBackend(res.user);
   },
+
+  uploadAvatar: (id: string, file: File): Promise<User> => avatarRequest(id, 'PUT', file),
+
+  removeAvatar: (id: string): Promise<User> => avatarRequest(id, 'DELETE'),
 
   remove: (id: string): Promise<{ removed: boolean; deactivated: boolean }> => api.delete(`/api/users/${id}`)
 };

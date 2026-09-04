@@ -3,6 +3,7 @@ import { Task, Project, Client, User } from '../types';
 import { Search, X, CheckSquare, FolderKanban, Building2, User as UserIcon, ArrowRight } from 'lucide-react';
 import { StatusBadge } from './StatusBadge';
 import { PriorityBadge } from './PriorityBadge';
+import { UserAvatar } from './UserAvatar';
 
 interface GlobalSearchModalProps {
   isOpen: boolean;
@@ -210,7 +211,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
                     className="flex items-center justify-between p-2 rounded-lg hover:bg-zinc-800/80 cursor-pointer border border-transparent hover:border-zinc-700/60 transition-colors"
                   >
                     <div className="flex items-center gap-2">
-                      <img src={u.avatar} alt={u.name} className="w-5 h-5 rounded-full object-cover" />
+                      <UserAvatar name={u.name} src={u.avatar} className="h-5 w-5" />
                       <span className="font-semibold text-zinc-200">{u.name}</span>
                       <span className="text-[10px] text-zinc-500">{u.position}</span>
                     </div>

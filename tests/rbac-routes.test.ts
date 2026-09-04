@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import express from 'express';
@@ -16,6 +17,7 @@ import { userRouter } from '../server/routes/userRoutes.js';
 import { authRouter } from '../server/routes/authRoutes.js';
 import { routineRouter } from '../server/routes/routineRoutes.js';
 import { productRouter } from '../server/routes/productRoutes.js';
+import { clientRouter } from '../server/routes/clientRoutes.js';
 
 const migrationsDirectory = path.resolve(process.cwd(), 'server', 'database', 'migrations');
 
@@ -45,7 +47,42 @@ test('rotas aplicam a matriz operacional de RBAC e preservam status em uso', asy
     collaboratorTwo: '00000000-0000-4000-8000-000000000004'
   };
   let server: ReturnType<ReturnType<typeof express>['listen']> | undefined;
+  const originalFetch = globalThis.fetch;
+  const previousStorageUrl = process.env.SUPABASE_URL;
+  const previousStorageKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const previousAvatarBucket = process.env.SUPABASE_AVATAR_BUCKET;
+  const previousLocalStorage = process.env.LOCAL_STORAGE_DIR;
+  const localAvatarStorage = fs.mkdtempSync(path.join(os.tmpdir(), 'tecnihub-avatar-'));
+  const storedAvatars = new Map<string, { bytes: Uint8Array; contentType: string }>();
+  let failNextAvatarUpload = false;
   try {
+    process.env.SUPABASE_URL = 'https://avatar-storage.test';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-key';
+    process.env.SUPABASE_AVATAR_BUCKET = 'test-avatars';
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (!url.startsWith('https://avatar-storage.test/')) return originalFetch(input, init);
+      const storagePath = decodeURIComponent(url.split('/test-avatars/')[1] || '');
+      const method = init?.method || 'GET';
+      if (method === 'POST') {
+        if (failNextAvatarUpload) {
+          failNextAvatarUpload = false;
+          return new Response('', { status: 500 });
+        }
+        const bytes = new Uint8Array(await new Response(init?.body as BodyInit).arrayBuffer());
+        storedAvatars.set(storagePath, { bytes, contentType: String(new Headers(init?.headers).get('content-type') || '') });
+        return new Response('{}', { status: 200 });
+      }
+      if (method === 'DELETE') {
+        storedAvatars.delete(storagePath);
+        return new Response('', { status: 200 });
+      }
+      const stored = storedAvatars.get(storagePath);
+      return stored
+        ? new Response(stored.bytes, { status: 200, headers: { 'Content-Type': stored.contentType } })
+        : new Response('', { status: 404 });
+    }) as typeof fetch;
+
     const initialPassword = 'Initial@123';
     const passwordHash = await bcrypt.hash(initialPassword, 4);
     for (const [id, name, email, role] of [
@@ -79,6 +116,7 @@ test('rotas aplicam a matriz operacional de RBAC e preservam status em uso', asy
     app.use('/api/users', userRouter);
     app.use('/api/auth', authRouter);
     app.use('/api/routines', routineRouter);
+    app.use('/api/clients', clientRouter);
     server = app.listen(0, '127.0.0.1');
     await new Promise<void>(resolve => server!.once('listening', resolve));
     const address = server.address();
@@ -98,6 +136,147 @@ test('rotas aplicam a matriz operacional de RBAC e preservam status em uso', asy
     const managerToken = await token(ids.manager);
     const adminToken = await token(ids.admin);
     const superAdminToken = await token(ids.superAdmin);
+
+    const rawRequest = (pathName: string, authToken: string, method: string, body: Uint8Array, contentType: string) => originalFetch(`${baseUrl}${pathName}`, {
+      method,
+      headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': contentType },
+      body
+    });
+
+    const pngAvatar = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]);
+    const jpegAvatar = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x01]);
+    assert.equal((await rawRequest(`/api/users/${ids.manager}/avatar`, collaboratorToken, 'PUT', pngAvatar, 'image/png')).status, 403);
+    assert.equal((await rawRequest(`/api/users/${ids.superAdmin}/avatar`, adminToken, 'PUT', pngAvatar, 'image/png')).status, 403);
+    assert.equal((await rawRequest(`/api/users/${ids.collaborator}/avatar`, collaboratorToken, 'PUT', Buffer.from('não é png'), 'image/png')).status, 415);
+    assert.equal((await rawRequest(`/api/users/${ids.collaborator}/avatar`, collaboratorToken, 'PUT', pngAvatar, 'image/gif')).status, 415);
+    assert.equal((await rawRequest(`/api/users/${ids.collaborator}/avatar`, collaboratorToken, 'PUT', Buffer.alloc(5 * 1024 * 1024 + 1), 'image/png')).status, 413);
+
+    const adminAvatarUpload = await rawRequest(`/api/users/${ids.collaborator}/avatar`, adminToken, 'PUT', pngAvatar, 'image/png');
+    assert.equal(adminAvatarUpload.status, 200);
+    const firstAvatar = (await adminAvatarUpload.json() as any).user.avatar as string;
+    assert.match(firstAvatar, new RegExp(`^/api/users/${ids.collaborator}/avatar\\?v=`));
+    assert.ok(storedAvatars.has(`avatars/${ids.collaborator}`));
+
+    failNextAvatarUpload = true;
+    assert.equal((await rawRequest(`/api/users/${ids.collaborator}/avatar`, collaboratorToken, 'PUT', jpegAvatar, 'image/jpeg')).status, 502);
+    assert.equal((await userRepository.findById(ids.collaborator))?.avatar, firstAvatar);
+
+    const replacementResponse = await rawRequest(`/api/users/${ids.collaborator}/avatar`, collaboratorToken, 'PUT', jpegAvatar, 'image/jpeg');
+    assert.equal(replacementResponse.status, 200);
+    const replacementAvatar = (await replacementResponse.json() as any).user.avatar as string;
+    assert.notEqual(replacementAvatar, firstAvatar);
+    const avatarContent = await originalFetch(`${baseUrl}/api/users/${ids.collaborator}/avatar`);
+    assert.equal(avatarContent.status, 200);
+    assert.equal(avatarContent.headers.get('content-type'), 'image/jpeg');
+    assert.deepEqual(new Uint8Array(await avatarContent.arrayBuffer()), new Uint8Array(jpegAvatar));
+    const persistedSession = await request('/api/auth/me', collaboratorToken, 'GET');
+    assert.equal((await persistedSession.json() as any).user.avatar, replacementAvatar);
+    assert.equal((await taskRepository.findById(task.id, { id: ids.admin, role: 'ADMIN' })).assignees.find((item: any) => item.id === ids.collaborator)?.avatar, replacementAvatar);
+    assert.equal((await projectRepository.findById(project.id))?.teamMembers.find((item: any) => item.id === ids.collaborator)?.avatar, replacementAvatar);
+
+    const removeAvatarResponse = await request(`/api/users/${ids.collaborator}/avatar`, collaboratorToken, 'DELETE');
+    assert.equal(removeAvatarResponse.status, 200);
+    assert.equal((await removeAvatarResponse.json() as any).user.avatar, '');
+    assert.equal((await userRepository.findById(ids.collaborator))?.avatar, '');
+    assert.equal(storedAvatars.has(`avatars/${ids.collaborator}`), false);
+
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    process.env.LOCAL_STORAGE_DIR = localAvatarStorage;
+    const localUploadResponse = await rawRequest(`/api/users/${ids.collaborator}/avatar`, collaboratorToken, 'PUT', pngAvatar, 'image/png');
+    assert.equal(localUploadResponse.status, 200);
+    assert.equal(fs.existsSync(path.join(localAvatarStorage, 'avatars', ids.collaborator)), true);
+    const localContent = await originalFetch(`${baseUrl}/api/users/${ids.collaborator}/avatar`);
+    assert.equal(localContent.status, 200);
+    assert.equal(localContent.headers.get('content-type'), 'image/png');
+    assert.equal((await request(`/api/users/${ids.collaborator}/avatar`, collaboratorToken, 'DELETE')).status, 200);
+    assert.equal(fs.existsSync(path.join(localAvatarStorage, 'avatars', ids.collaborator)), false);
+    process.env.SUPABASE_URL = 'https://avatar-storage.test';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-key';
+
+    assert.equal((await request(`/api/clients/${client.id}`, managerToken, 'PUT', { name: 'Alteração indevida' })).status, 403);
+    assert.equal((await request(`/api/clients/${client.id}/status`, collaboratorToken, 'PATCH', { status: 'INACTIVE' })).status, 403);
+    assert.equal((await request(`/api/clients/${client.id}/permanent`, managerToken, 'DELETE')).status, 403);
+
+    const editedClientResponse = await request(`/api/clients/${client.id}`, adminToken, 'PUT', {
+      name: 'Cliente atualizado', company_name: 'Cliente atualizado Ltda', contact_name: 'Contato atualizado',
+      email: 'cliente.atualizado@example.com', phone: '11999999999', lead_manager_id: ids.manager,
+      notes: 'Persistido pela API', monthly_services: ['SEO'], logo: 'CA'
+    });
+    assert.equal(editedClientResponse.status, 200);
+    assert.equal((await editedClientResponse.json() as any).client.name, 'Cliente atualizado');
+    assert.equal((await clientRepository.findById(client.id))?.email, 'cliente.atualizado@example.com');
+
+    assert.equal((await request(`/api/clients/${client.id}/status`, adminToken, 'PATCH', { status: 'INACTIVE' })).status, 200);
+    assert.equal((await clientRepository.findById(client.id))?.status, 'INACTIVE');
+    const inactiveClientsResponse = await request('/api/clients?status=INACTIVE', adminToken, 'GET');
+    assert.equal(inactiveClientsResponse.status, 200);
+    assert.ok((await inactiveClientsResponse.json() as any).clients.some((item: any) => item.id === client.id));
+    assert.equal((await request(`/api/clients/${client.id}/status`, superAdminToken, 'PATCH', { status: 'ACTIVE' })).status, 200);
+    assert.equal((await clientRepository.findById(client.id))?.status, 'ACTIVE');
+
+    const fakeClientResponse = await request('/api/clients', adminToken, 'POST', {
+      name: 'Cliente fake com histórico', company_name: 'Teste', lead_manager_id: ids.admin
+    });
+    assert.equal(fakeClientResponse.status, 201);
+    const fakeClient = (await fakeClientResponse.json() as any).client;
+    const fakeProject = await projectRepository.create({
+      name: 'Projeto fake', description: '', client_id: fakeClient.id, project_type: 'WEBSITE', manager_id: ids.admin,
+      status: 'PLANNING', priority: 'NORMAL', start_date: null, due_date: null, progress: 0, is_recurring: false, created_by: ids.admin
+    }, [ids.collaborator]);
+    const fakeTask = await taskRepository.create({
+      project_id: fakeProject.id, title: 'Tarefa fake', description: '', responsible_user_id: ids.collaborator,
+      assignee_ids: [ids.collaborator, ids.admin], status: 'A_FAZER', priority: 'NORMAL', start_date: null,
+      due_date: '2026-09-20', due_time: null, completed_at: null, created_by: ids.admin
+    });
+    const fakeSubtask = await taskRepository.create({
+      project_id: fakeProject.id, parent_task_id: fakeTask.id, title: 'Subtarefa fake', description: '',
+      responsible_user_id: ids.collaborator, assignee_ids: [ids.collaborator], status: 'A_FAZER', priority: 'NORMAL',
+      start_date: null, due_date: '2026-09-19', due_time: null, completed_at: null, created_by: ids.admin
+    });
+    await database.query('INSERT INTO checklist_items (task_id, title) VALUES ($1, $2)', [fakeSubtask.id, 'Checklist fake']);
+    await database.query('INSERT INTO task_comments (task_id, user_id, content) VALUES ($1, $2, $3)', [fakeTask.id, ids.admin, 'Comentário fake']);
+    await database.query(
+      `INSERT INTO project_resources (project_id, kind, name, url, created_by)
+       VALUES ($1, 'GOOGLE_DRIVE', 'Referência fake', 'https://drive.google.com/example', $2)`,
+      [fakeProject.id, ids.admin]
+    );
+    await routineRepository.upsert({
+      source_task_id: fakeTask.id, frequency: 'SEMANAL', rule_text: 'Rotina fake', next_occurrence_date: '2026-09-27', created_by: ids.admin
+    });
+
+    const invalidConfirmation = await request(`/api/clients/${fakeClient.id}/permanent`, adminToken, 'DELETE', { confirmationName: 'nome incorreto' });
+    assert.equal(invalidConfirmation.status, 400);
+    assert.ok(await clientRepository.findById(fakeClient.id));
+
+    const linkedDeletionResponse = await request(`/api/clients/${fakeClient.id}/permanent`, superAdminToken, 'DELETE', { confirmationName: fakeClient.name });
+    assert.equal(linkedDeletionResponse.status, 200);
+    const linkedDeletion = await linkedDeletionResponse.json() as any;
+    assert.equal(linkedDeletion.deleted, true);
+    assert.ok(linkedDeletion.snapshotId);
+    assert.equal(linkedDeletion.deletedRelations.projects, 1);
+    assert.equal(linkedDeletion.deletedRelations.tasks, 2);
+    assert.equal(linkedDeletion.deletedRelations.projectResources, 1);
+    assert.equal(linkedDeletion.pendingStorageCleanup, 0);
+    assert.equal(await clientRepository.findById(fakeClient.id), null);
+    assert.equal(Number((await database.query<{ total: number }>('SELECT COUNT(*)::integer AS total FROM projects WHERE id = $1', [fakeProject.id])).rows[0].total), 0);
+    assert.equal(Number((await database.query<{ total: number }>('SELECT COUNT(*)::integer AS total FROM tasks WHERE project_id = $1', [fakeProject.id])).rows[0].total), 0);
+    for (const table of ['project_members', 'project_resources']) {
+      assert.equal(Number((await database.query<{ total: number }>(`SELECT COUNT(*)::integer AS total FROM ${table} WHERE project_id = $1`, [fakeProject.id])).rows[0].total), 0);
+    }
+    for (const table of ['task_assignees', 'checklist_items', 'task_comments']) {
+      assert.equal(Number((await database.query<{ total: number }>(`SELECT COUNT(*)::integer AS total FROM ${table} WHERE task_id IN ($1, $2)`, [fakeTask.id, fakeSubtask.id])).rows[0].total), 0);
+    }
+    assert.equal(Number((await database.query<{ total: number }>('SELECT COUNT(*)::integer AS total FROM recurrence_rules WHERE source_task_id = $1', [fakeTask.id])).rows[0].total), 0);
+    const snapshot = await database.query<{ original_client_id: string; deleted_by: string; snapshot: any }>(
+      'SELECT original_client_id, deleted_by, snapshot FROM deleted_client_snapshots WHERE id = $1',
+      [linkedDeletion.snapshotId]
+    );
+    assert.equal(snapshot.rows[0].original_client_id, fakeClient.id);
+    assert.equal(snapshot.rows[0].deleted_by, ids.superAdmin);
+    assert.equal(snapshot.rows[0].snapshot.client.name, fakeClient.name);
+    assert.equal(snapshot.rows[0].snapshot.projects.length, 1);
+    assert.equal(snapshot.rows[0].snapshot.tasks.length, 2);
 
     const adminProjectsResponse = await request('/api/projects?operationalView=admin', adminToken, 'GET');
     assert.equal(adminProjectsResponse.status, 200);
@@ -312,6 +491,12 @@ test('rotas aplicam a matriz operacional de RBAC e preservam status em uso', asy
     assert.equal((await allUsersResponse.json() as any).users.some((user: any) => user.id === ids.collaborator), true);
     assert.equal((await request('/api/users', collaboratorToken, 'GET')).status, 403);
   } finally {
+    globalThis.fetch = originalFetch;
+    if (previousStorageUrl === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = previousStorageUrl;
+    if (previousStorageKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY; else process.env.SUPABASE_SERVICE_ROLE_KEY = previousStorageKey;
+    if (previousAvatarBucket === undefined) delete process.env.SUPABASE_AVATAR_BUCKET; else process.env.SUPABASE_AVATAR_BUCKET = previousAvatarBucket;
+    if (previousLocalStorage === undefined) delete process.env.LOCAL_STORAGE_DIR; else process.env.LOCAL_STORAGE_DIR = previousLocalStorage;
+    fs.rmSync(localAvatarStorage, { recursive: true, force: true });
     if (server) await new Promise<void>(resolve => server!.close(() => resolve()));
     setDatabasePoolForTests(null);
     await database.close();

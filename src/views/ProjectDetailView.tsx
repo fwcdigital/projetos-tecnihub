@@ -4,6 +4,7 @@ import { TaskRow } from '../components/TaskRow';
 import { CompletedTasksSection } from '../components/CompletedTasksSection';
 import { PriorityPicker } from '../components/PriorityPicker';
 import { StatusPicker } from '../components/StatusPicker';
+import { ProductBadge } from '../components/ProductBadge';
 import { 
   ArrowLeft, 
   Plus, 
@@ -30,7 +31,6 @@ import { UserAvatar } from '../components/UserAvatar';
 import { projectService } from '../services/projectService';
 import { canManageProjectOperations } from '../permissions';
 import { getWorkflowStatusOptions } from '../components/visualTokens';
-import { useOperationalView } from '../context/OperationalViewContext';
 
 interface ProjectDetailViewProps {
   project: Project;
@@ -67,7 +67,6 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   projectStatuses,
   onUpdateProject
 }) => {
-  const { mode: operationalView } = useOperationalView();
   const [activeTab, setActiveTab] = useState<'ALL' | 'TODO' | 'PROGRESS' | 'DOCS'>('ALL');
   const [briefing, setBriefing] = useState<Record<string, string>>({});
   const [savingBriefing, setSavingBriefing] = useState(false);
@@ -101,9 +100,6 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
   const completedCount = projectCompletedTasks.length;
   const totalTaskCount = projectTasks.length + completedCount;
-  const visibleProgress = operationalView === 'operator'
-    ? (totalTaskCount > 0 ? Math.round((completedCount / totalTaskCount) * 100) : 0)
-    : project.progress;
   const overdueCount = projectTasks.filter(t => t.dueDate < new Date().toISOString().slice(0, 10)).length;
 
   return (
@@ -132,10 +128,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 text-xs font-medium border border-zinc-700">
                 {project.clientName}
               </span>
-              <span className="inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs font-medium" style={{ borderColor: `${project.typeColor || '#71717a'}66`, backgroundColor: `${project.typeColor || '#71717a'}18`, color: project.typeColor || '#d4d4d8' }}>
-                <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: project.typeColor || '#71717a' }} />
-                {project.typeName || project.type}
-              </span>
+              <ProductBadge label={project.typeName || project.type} color={project.typeColor} />
               <StatusPicker value={project.status} options={getWorkflowStatusOptions(project.workflowStatuses || [], { value: project.status, label: project.statusName, color: project.statusColor })} onChange={canManageProject ? status => void onUpdateProject(project, { status }) : undefined} ariaLabel={`Alterar status de ${project.name}`} />
               <PriorityPicker value={project.priority} onChange={canManageProject ? priority => void onUpdateProject(project, { priority }) : undefined} />
               {project.isRecurring && (
@@ -156,11 +149,6 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
 
           {/* Quick Metrics in Header */}
           <div className="flex items-center gap-4 bg-zinc-900/80 p-3 rounded-xl border border-zinc-800 self-start md:self-auto">
-            <div className="text-center px-2">
-              <span className="block text-lg font-black text-white font-mono">{visibleProgress}%</span>
-              <span className="text-[10px] uppercase font-bold text-zinc-500">Concluído</span>
-            </div>
-            <div className="w-px h-8 bg-zinc-800" />
             <div className="text-center px-2">
               <span className="block text-lg font-black text-white font-mono">{completedCount}/{totalTaskCount}</span>
               <span className="text-[10px] uppercase font-bold text-zinc-500">Tarefas</span>

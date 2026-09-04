@@ -7,6 +7,7 @@ import { ViewMode, ViewModeSwitcher } from '../components/ViewModeSwitcher';
 import { AssigneePicker } from '../components/AssigneePicker';
 import { DateRangePicker } from '../components/DateRangePicker';
 import { InlineSelectPicker } from '../components/InlineSelectPicker';
+import { ProductPicker, ProductPickerOption } from '../components/ProductPicker';
 import { canEditProjectDates, canManageProjectOperations, isAdministrator } from '../permissions';
 import { getWorkflowStatusOptions } from '../components/visualTokens';
 import { GroupHeader, GroupingSwitcher, groupProjects, usePersistentGrouping } from '../components/GroupingSwitcher';
@@ -40,7 +41,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ projects, clients, t
   const activeUsers = users.filter(user => user.accountStatus !== 'INACTIVE');
   const managerOptions = activeUsers.filter(user => user.role !== 'COLABORADOR');
   const clientOptions = clients.map(client => ({ value: client.id, label: client.name }));
-  const projectTypeOptions = products.filter(product => product.active).map(product => ({ value: product.id, label: product.name }));
+  const projectTypeOptions: ProductPickerOption[] = products.filter(product => product.active).map(product => ({ value: product.id, label: product.name, color: product.color }));
   const productFilters = Array.from(new Map([
     ...products.map(product => [product.id, product.name] as const),
     ...projects.map(project => [project.type, project.typeName || project.type] as const)
@@ -63,7 +64,6 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ projects, clients, t
     const today = new Date().toISOString().slice(0, 10);
     return tasks.filter(task => task.projectId === project.id && !task.statusCompleted && task.dueDate < today).length;
   };
-  const progress = (project: Project) => <div className="flex min-w-24 items-center gap-2"><div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-800"><div className={`h-full rounded-full ${project.progress >= 80 ? 'bg-emerald-500' : project.progress >= 40 ? 'bg-sky-500' : 'bg-amber-500'}`} style={{ width: `${project.progress}%` }} /></div><span className="w-8 text-right font-mono text-[10px] font-bold text-zinc-300">{project.progress}%</span></div>;
   const statusControl = (project: Project) => {
     const options = getWorkflowStatusOptions(project.workflowStatuses || [], { value: project.status, label: project.statusName, color: project.statusColor });
     return <StatusPicker value={project.status} options={options} onChange={canManage ? status => {
@@ -84,13 +84,23 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ projects, clients, t
     const client = clients.find(item => item.id === clientId);
     void onUpdateProject(project, { clientId, clientName: client?.name || project.clientName });
   } : undefined} icon={<Building2 size={10} className="shrink-0 text-zinc-600" />} ariaLabel={`Alterar cliente de ${project.name}`} />;
-  const typeControl = (project: Project) => <InlineSelectPicker value={project.type} label={project.typeName || project.type} options={projectTypeOptions.some(option => option.value === project.type) ? projectTypeOptions : [{ value: project.type, label: project.typeName || project.type }, ...projectTypeOptions]} onChange={canManage ? type => { const product = products.find(item => item.id === type); const status = product?.statuses?.[0]; if (status) void onUpdateProject(project, { type, status: status.id }); } : undefined} icon={<span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: project.typeColor || '#71717a' }} />} ariaLabel={`Alterar tipo de ${project.name}`} />;
+  const typeControl = (project: Project) => {
+    const configuredProduct = products.find(product => product.id === project.type);
+    const options = projectTypeOptions.some(option => option.value === project.type)
+      ? projectTypeOptions
+      : [{ value: project.type, label: project.typeName || project.type, color: configuredProduct?.color || project.typeColor }, ...projectTypeOptions];
+    return <ProductPicker value={project.type} options={options} onChange={canManage ? type => {
+      const product = products.find(item => item.id === type);
+      const status = product?.statuses?.[0];
+      if (status) void onUpdateProject(project, { type, status: status.id });
+    } : undefined} ariaLabel={`Alterar tipo de ${project.name}`} />;
+  };
   const dateControl = (project: Project) => <DateRangePicker startDate={project.startDate} dueDate={project.dueDate} title="Período do projeto" showTime={false} requireDueDate allowClearStart={false} onChange={canChangeDates ? range => void onUpdateProject(project, { startDate: range.startDate || project.startDate, dueDate: range.dueDate || project.dueDate }) : undefined} />;
 
   return (
     <div className="mx-auto max-w-[1800px] space-y-4 p-4 sm:p-6">
       <div className="flex flex-col justify-between gap-4 border-b border-zinc-800 pb-3 sm:flex-row sm:items-end">
-        <div><div className="flex items-center gap-2"><h1 className="text-xl font-black tracking-tight text-white sm:text-2xl">Projetos</h1><span className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-0.5 font-mono text-xs font-bold text-zinc-300">{filteredProjects.length}</span></div><p className="mt-1 text-xs text-zinc-400">Progresso, prazos, responsáveis e equipe em uma visão operacional.</p></div>
+        <div><div className="flex items-center gap-2"><h1 className="text-xl font-black tracking-tight text-white sm:text-2xl">Projetos</h1><span className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-0.5 font-mono text-xs font-bold text-zinc-300">{filteredProjects.length}</span></div><p className="mt-1 text-xs text-zinc-400">Prazos, responsáveis e equipe em uma visão operacional.</p></div>
         <div className="flex flex-wrap items-center gap-2"><GroupingSwitcher value={grouping} onChange={setGrouping} /><ViewModeSwitcher value={viewMode} onChange={setViewMode} modes={['ROW', 'TABLE', 'CARD']} />{onOpenNewProject && <button type="button" onClick={onOpenNewProject} className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-bold text-zinc-950 hover:bg-zinc-100"><Plus size={13} />Novo projeto</button>}</div>
       </div>
 
@@ -105,23 +115,22 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ projects, clients, t
         <div className="space-y-5">
           {groupedProjects.map(group => <section key={group.key} className="space-y-1.5"><GroupHeader group={group} count={group.items.length} />{group.items.map(project => {
             const overdueCount = overdue(project);
-            return <article key={project.id} className="grid items-center gap-x-3 gap-y-3 rounded-lg border border-zinc-800 bg-[#121216] px-3 py-2 transition-colors hover:border-zinc-700 hover:bg-[#16161c] md:grid-cols-2 xl:grid-cols-[minmax(190px,1.4fr)_minmax(125px,.85fr)_90px_90px_90px_120px_140px_110px_28px]">
-              <div className="min-w-0"><button type="button" onClick={() => onSelectProject(project)} className="block max-w-full truncate text-left text-xs font-bold text-zinc-100 hover:text-sky-300">{project.name}</button><div className="mt-0.5 min-w-0">{clientControl(project)}</div></div>
+            return <article key={project.id} className="grid items-center gap-x-3 gap-y-3 rounded-lg border border-zinc-800 bg-[#121216] px-3 py-2 transition-colors hover:border-zinc-700 hover:bg-[#16161c] md:grid-cols-2 xl:grid-cols-[minmax(260px,1.65fr)_minmax(125px,.85fr)_minmax(130px,.9fr)_90px_120px_120px_140px_28px]">
+              <div className="flex min-w-0 items-center gap-2">{priorityControl(project)}<button type="button" onClick={() => onSelectProject(project)} className="block min-w-0 max-w-full truncate text-left text-xs font-bold text-zinc-100 hover:text-sky-300">{project.name}</button></div>
+              <div className="min-w-0">{clientControl(project)}</div>
               <div className="min-w-0">{managerControl(project)}</div>
               {teamControl(project)}
               {typeControl(project)}
-              {priorityControl(project)}
               {statusControl(project)}
               {dateControl(project)}
-              {progress(project)}
               <button type="button" onClick={() => onSelectProject(project)} className="relative rounded p-1.5 text-zinc-600 hover:bg-zinc-800 hover:text-zinc-200" title="Abrir projeto">{overdueCount > 0 && <span className="absolute -left-5 top-2 flex items-center gap-0.5 text-[9px] text-rose-400"><AlertTriangle size={9} />{overdueCount}</span>}<ArrowRight size={13} /></button>
             </article>;
           })}</section>)}
         </div>
       ) : viewMode === 'TABLE' ? (
-        <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-[#111115]"><table className="w-full min-w-[1180px] border-collapse text-left"><thead><tr className="border-b border-zinc-800 text-[9px] font-bold uppercase tracking-wider text-zinc-600"><th className="px-3 py-2">Projeto</th><th className="px-3 py-2">Cliente</th><th className="px-3 py-2">Responsável</th><th className="px-3 py-2">Equipe</th><th className="px-3 py-2">Tipo</th><th className="px-3 py-2">Prioridade</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Período</th><th className="px-3 py-2">Progresso</th></tr></thead>{groupedProjects.map(group => <tbody key={group.key} className="divide-y divide-zinc-800"><tr><td colSpan={9} className="bg-zinc-950/60 px-3 py-2"><GroupHeader group={group} count={group.items.length} /></td></tr>{group.items.map(project => <tr key={project.id} className="text-[11px] text-zinc-400 hover:bg-zinc-900/60"><td className="px-3 py-2"><button type="button" onClick={() => onSelectProject(project)} className="max-w-52 truncate font-bold text-zinc-100 hover:text-sky-300">{project.name}</button></td><td className="px-3 py-2">{clientControl(project)}</td><td className="px-3 py-2">{managerControl(project)}</td><td className="px-3 py-2">{teamControl(project)}</td><td className="px-3 py-2">{typeControl(project)}</td><td className="px-3 py-2">{priorityControl(project)}</td><td className="px-3 py-2">{statusControl(project)}</td><td className="whitespace-nowrap px-3 py-2">{dateControl(project)}</td><td className="px-3 py-2">{progress(project)}</td></tr>)}</tbody>)}</table></div>
+        <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-[#111115]"><table className="w-full min-w-[1180px] border-collapse text-left"><thead><tr className="border-b border-zinc-800 text-[9px] font-bold uppercase tracking-wider text-zinc-600"><th className="px-3 py-2">Prioridade</th><th className="px-3 py-2">Projeto</th><th className="px-3 py-2">Cliente</th><th className="px-3 py-2">Responsável</th><th className="px-3 py-2">Equipe</th><th className="px-3 py-2">Tipo</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Período</th><th className="px-3 py-2 text-right">Ações</th></tr></thead>{groupedProjects.map(group => <tbody key={group.key} className="divide-y divide-zinc-800"><tr><td colSpan={9} className="bg-zinc-950/60 px-3 py-2"><GroupHeader group={group} count={group.items.length} /></td></tr>{group.items.map(project => { const overdueCount = overdue(project); return <tr key={project.id} className="text-[11px] text-zinc-400 hover:bg-zinc-900/60"><td className="px-3 py-2">{priorityControl(project)}</td><td className="px-3 py-2"><button type="button" onClick={() => onSelectProject(project)} className="max-w-52 truncate font-bold text-zinc-100 hover:text-sky-300">{project.name}</button></td><td className="px-3 py-2">{clientControl(project)}</td><td className="px-3 py-2">{managerControl(project)}</td><td className="px-3 py-2">{teamControl(project)}</td><td className="px-3 py-2">{typeControl(project)}</td><td className="px-3 py-2">{statusControl(project)}</td><td className="whitespace-nowrap px-3 py-2">{dateControl(project)}</td><td className="px-3 py-2 text-right"><button type="button" onClick={() => onSelectProject(project)} className="relative rounded p-1.5 text-zinc-600 hover:bg-zinc-800 hover:text-zinc-200" title="Abrir projeto">{overdueCount > 0 && <span className="absolute -left-5 top-2 flex items-center gap-0.5 text-[9px] text-rose-400"><AlertTriangle size={9} />{overdueCount}</span>}<ArrowRight size={13} /></button></td></tr>; })}</tbody>)}</table></div>
       ) : (
-        <div className="space-y-5">{groupedProjects.map(group => <section key={group.key} className="space-y-2"><GroupHeader group={group} count={group.items.length} /><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{group.items.map(project => <article key={project.id} className="space-y-3 rounded-xl border border-zinc-800 bg-[#121216] p-4 hover:border-zinc-700"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><button type="button" onClick={() => onSelectProject(project)} className="truncate text-sm font-bold text-zinc-100 hover:text-sky-300">{project.name}</button><div className="mt-1">{clientControl(project)}</div></div>{statusControl(project)}</div><div className="grid grid-cols-2 gap-2 text-[11px]"><div>{typeControl(project)}</div><div>{dateControl(project)}</div></div>{progress(project)}</article>)}</div></section>)}</div>
+        <div className="space-y-5">{groupedProjects.map(group => <section key={group.key} className="space-y-2"><GroupHeader group={group} count={group.items.length} /><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{group.items.map(project => <article key={project.id} className="space-y-3 rounded-xl border border-zinc-800 bg-[#121216] p-4 hover:border-zinc-700"><div className="flex min-w-0 items-start gap-2">{priorityControl(project)}<button type="button" onClick={() => onSelectProject(project)} className="min-w-0 flex-1 truncate text-left text-sm font-bold text-zinc-100 hover:text-sky-300">{project.name}</button><button type="button" onClick={() => onSelectProject(project)} className="shrink-0 rounded p-1 text-zinc-600 hover:bg-zinc-800 hover:text-zinc-200" title="Abrir projeto"><ArrowRight size={13} /></button></div><div>{clientControl(project)}</div><div className="flex flex-wrap items-center gap-2">{typeControl(project)}{statusControl(project)}</div><div className="grid grid-cols-2 items-center gap-3 border-t border-zinc-800/80 pt-3"><div className="min-w-0">{managerControl(project)}</div><div>{teamControl(project)}</div></div><div>{dateControl(project)}</div></article>)}</div></section>)}</div>
       )}
       {filteredProjects.length === 0 && <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-10 text-center text-xs text-zinc-500">Nenhum projeto encontrado com os filtros selecionados.</div>}
     </div>

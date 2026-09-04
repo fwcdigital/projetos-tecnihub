@@ -5,12 +5,42 @@ import { isUuid } from '../validation.js';
 
 export const clientRouter = Router();
 
+function encodedStoragePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
+async function removeStoredClientFiles(storagePaths: string[]): Promise<string[]> {
+  if (storagePaths.length === 0) return [];
+  const url = process.env.SUPABASE_URL?.replace(/\/$/, '');
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const bucket = process.env.SUPABASE_STORAGE_BUCKET || 'project-resources';
+  if (!url || !key) return storagePaths;
+
+  const pending: string[] = [];
+  for (const storagePath of storagePaths) {
+    try {
+      const removal = await fetch(`${url}/storage/v1/object/${bucket}/${encodedStoragePath(storagePath)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${key}`, apikey: key }
+      });
+      if (!removal.ok && removal.status !== 404) pending.push(storagePath);
+    } catch {
+      pending.push(storagePath);
+    }
+  }
+  return pending;
+}
+
 // GET /api/clients - Listar todos os clientes
 clientRouter.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const { status, search } = req.query;
+    const requestedStatus = typeof status === 'string' ? status.toUpperCase() : undefined;
+    if (requestedStatus && requestedStatus !== 'ALL' && !['ACTIVE', 'INACTIVE', 'ARCHIVED'].includes(requestedStatus)) {
+      return res.status(400).json({ error: 'Filtro de status de cliente inválido.' });
+    }
     const clients = await clientRepository.findAll(req.user, {
-      status: status as ClientStatus,
+      status: requestedStatus && requestedStatus !== 'ALL' ? requestedStatus as ClientStatus : undefined,
       search: search as string
     });
 
@@ -113,9 +143,9 @@ clientRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']),
 });
 
 // PUT /api/clients/:id - Editar cliente
-clientRouter.put('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER']), async (req: AuthRequest, res: Response) => {
+clientRouter.put('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
-    const { name, company_name, contact_name, email, phone, status, lead_manager_id, notes, monthly_services, logo } = req.body;
+    const { name, company_name, contact_name, email, phone, lead_manager_id, notes, monthly_services, logo } = req.body;
     const clientId = req.params.id;
 
     if (!isUuid(clientId)) {
@@ -143,7 +173,6 @@ clientRouter.put('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN',
     if (contact_name !== undefined) updates.contact_name = contact_name.trim();
     if (email !== undefined) updates.email = email.trim();
     if (phone !== undefined) updates.phone = phone.trim();
-    if (status) updates.status = status;
     if (lead_manager_id !== undefined) updates.lead_manager_id = lead_manager_id;
     if (notes !== undefined) updates.notes = notes;
     if (monthly_services !== undefined) updates.monthly_services = monthly_services;
@@ -160,7 +189,61 @@ clientRouter.put('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN',
   }
 });
 
-// DELETE /api/clients/:id - Arquivar cliente (Soft Delete)
+// PATCH /api/clients/:id/status - Inativar ou reativar sem remover dados relacionados
+clientRouter.patch('/:id/status', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), async (req: AuthRequest, res: Response) => {
+  try {
+    if (!isUuid(req.params.id)) {
+      return res.status(404).json({ error: 'Cliente não encontrado.' });
+    }
+    const status = String(req.body?.status || '').toUpperCase();
+    if (status !== 'ACTIVE' && status !== 'INACTIVE') {
+      return res.status(400).json({ error: 'Status deve ser ACTIVE ou INACTIVE.' });
+    }
+    const updated = await clientRepository.setStatus(req.params.id, status);
+    if (!updated) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    return res.json({
+      message: status === 'ACTIVE' ? 'Cliente reativado com sucesso.' : 'Cliente inativado com sucesso.',
+      client: updated
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Erro ao alterar o status do cliente.' });
+  }
+});
+
+// DELETE /api/clients/:id/permanent - Excluir cliente e toda a cadeia de dados pertencente a ele
+clientRouter.delete('/:id/permanent', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), async (req: AuthRequest, res: Response) => {
+  try {
+    if (!isUuid(req.params.id)) {
+      return res.status(404).json({ error: 'Cliente não encontrado.' });
+    }
+    const existing = await clientRepository.findById(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Cliente não encontrado.' });
+
+    const confirmationName = String(req.body?.confirmationName || '').trim();
+    if (confirmationName !== existing.name) {
+      return res.status(400).json({ error: 'Digite o nome exato do cliente para confirmar a exclusão definitiva.' });
+    }
+
+    const result = await clientRepository.deletePermanent(req.params.id, req.user!.id);
+    if (!result.deleted) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const pendingStorageCleanup = await removeStoredClientFiles(result.storagePaths);
+    if (pendingStorageCleanup.length > 0) {
+      console.warn(`[Clientes] ${pendingStorageCleanup.length} arquivo(s) aguardam limpeza externa após a exclusão de ${req.params.id}.`);
+    }
+    return res.json({
+      message: 'Cliente e todos os dados relacionados foram excluídos definitivamente.',
+      deleted: true,
+      snapshotId: result.snapshotId,
+      deletedRelations: result.dependencies,
+      pendingStorageCleanup: pendingStorageCleanup.length
+    });
+  } catch (error) {
+    console.error('Erro na exclusão definitiva do cliente:', error);
+    return res.status(500).json({ error: 'Erro ao excluir definitivamente o cliente.' });
+  }
+});
+
+// DELETE /api/clients/:id - Compatibilidade: inativar cliente (soft delete)
 clientRouter.delete('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
     if (!isUuid(req.params.id)) {
@@ -170,7 +253,7 @@ clientRouter.delete('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMI
     if (!archived) {
       return res.status(404).json({ error: 'Cliente não encontrado.' });
     }
-    return res.json({ message: 'Cliente arquivado com sucesso.', client: archived });
+    return res.json({ message: 'Cliente inativado com sucesso.', client: archived });
   } catch (error) {
     return res.status(500).json({ error: 'Erro ao arquivar cliente.' });
   }

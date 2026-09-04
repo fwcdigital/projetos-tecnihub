@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { User, UserRole } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { Shield, ShieldAlert, UserCheck, Briefcase, ChevronDown, LogOut } from 'lucide-react';
+import { UserAvatar } from './UserAvatar';
 
 interface UserRoleSwitcherProps {
   currentUser: User;
@@ -44,11 +45,7 @@ export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser 
         className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 transition-all text-xs text-left"
         title="Gerenciar sessão"
       >
-        <img
-          src={currentUser.avatar}
-          alt={currentUser.name}
-          className="w-6 h-6 rounded-full object-cover border border-zinc-700 flex-shrink-0"
-        />
+        <UserAvatar name={currentUser.name} src={currentUser.avatar} className="h-6 w-6" />
         <div className="flex flex-col hidden sm:flex">
           <div className="flex items-center gap-1.5">
             <span className="font-semibold text-zinc-100 text-xs">{currentUser.name}</span>
@@ -72,7 +69,7 @@ export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser 
             </div>
 
             <div className="flex items-center gap-2.5 rounded-lg bg-zinc-800/70 p-2">
-              <img src={currentUser.avatar} alt={currentUser.name} className="h-7 w-7 shrink-0 rounded-full border border-zinc-700 object-cover" />
+              <UserAvatar name={currentUser.name} src={currentUser.avatar} className="h-7 w-7" />
               <div className="min-w-0 flex-1">
                 <span className="block truncate text-xs font-semibold text-zinc-100">{currentUser.name}</span>
                 <span className="block truncate text-[10px] text-zinc-400">{currentUser.email}</span>

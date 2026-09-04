@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { User } from '../types';
 import { User as UserIcon, Bell, Key, Check, Loader2, AlertCircle } from 'lucide-react';
+import { AvatarUploadField } from '../components/AvatarUploadField';
 
 interface ProfileViewProps {
   currentUser: User;
   onChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  onSaveAvatar: (file: File | null, remove: boolean) => Promise<void>;
 }
 
-export const ProfileView: React.FC<ProfileViewProps> = ({ currentUser, onChangePassword }) => {
+export const ProfileView: React.FC<ProfileViewProps> = ({ currentUser, onChangePassword, onSaveAvatar }) => {
   const [saved, setSaved] = useState(false);
   const [name, setName] = useState(currentUser.name);
   const [email, setEmail] = useState(currentUser.email);
@@ -20,6 +22,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ currentUser, onChangeP
   const [confirmPassword, setConfirmPassword] = useState('');
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [removeAvatar, setRemoveAvatar] = useState(false);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,6 +46,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ currentUser, onChangeP
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
+      }
+      if (avatarFile || removeAvatar) {
+        await onSaveAvatar(avatarFile, removeAvatar);
+        setAvatarFile(null);
+        setRemoveAvatar(false);
       }
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -67,10 +76,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ currentUser, onChangeP
       <form onSubmit={handleSave} className="space-y-6">
         {/* User Card Info */}
         <div className="p-5 rounded-2xl bg-[#121216] border border-zinc-800 flex flex-col sm:flex-row items-center gap-5">
-          <img
+          <AvatarUploadField
+            name={currentUser.name}
             src={currentUser.avatar}
-            alt={currentUser.name}
-            className="w-20 h-20 rounded-full object-cover border-2 border-zinc-700 shadow-lg"
+            selectedFile={avatarFile}
+            removed={removeAvatar}
+            onSelectedFile={file => { setAvatarFile(file); setRemoveAvatar(false); }}
+            onRemove={() => { setAvatarFile(null); setRemoveAvatar(true); }}
+            disabled={saving}
           />
           <div className="space-y-1 text-center sm:text-left flex-1">
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
@@ -82,12 +95,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ currentUser, onChangeP
             <p className="text-xs text-zinc-400">{email}</p>
             <p className="text-[11px] text-zinc-500">{currentUser.position} • Tecnihub Digital</p>
           </div>
-          <button
-            type="button"
-            className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-200 font-semibold border border-zinc-700"
-          >
-            Alterar Foto
-          </button>
         </div>
 
         {/* Personal Details */}

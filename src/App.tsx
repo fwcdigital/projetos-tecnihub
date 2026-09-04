@@ -101,6 +101,7 @@ function MainLayout() {
   const [isEditProjectModalOpen, setIsEditProjectModalOpen] = useState(false);
   const [newProjectClientId, setNewProjectClientId] = useState<string | undefined>();
   const [isNewClientModalOpen, setIsNewClientModalOpen] = useState(false);
+  const [isEditClientModalOpen, setIsEditClientModalOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
 
   // Sincronizar currentUser quando authUser mudar
@@ -378,6 +379,54 @@ function MainLayout() {
     setNotifications(prev => [newNotif, ...prev]);
   };
 
+  const handleUpdateClient = async (client: Client, updates: Partial<Client>) => {
+    setMutationError('');
+    try {
+      const savedClient = await clientService.update(client.id, updates);
+      setClients(previous => previous.map(item => item.id === savedClient.id ? savedClient : item));
+      setSelectedClient(savedClient);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível atualizar o cliente.';
+      setMutationError(message);
+      throw error;
+    }
+  };
+
+  const handleSetClientStatus = async (status: 'ACTIVE' | 'INACTIVE') => {
+    if (!selectedClient) return;
+    setMutationError('');
+    try {
+      const savedClient = await clientService.setStatus(selectedClient.id, status);
+      setClients(previous => previous.map(item => item.id === savedClient.id ? savedClient : item));
+      setSelectedClient(savedClient);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível alterar o status do cliente.';
+      setMutationError(message);
+      throw error;
+    }
+  };
+
+  const handleDeleteClient = async (confirmationName: string) => {
+    if (!selectedClient) return;
+    setMutationError('');
+    try {
+      const deletedClientId = selectedClient.id;
+      await clientService.deletePermanent(deletedClientId, confirmationName);
+      setClients(previous => previous.filter(item => item.id !== deletedClientId));
+      setProjects(previous => previous.filter(item => item.clientId !== deletedClientId));
+      setTasks(previous => previous.filter(item => item.clientId !== deletedClientId));
+      setRoutines(previous => previous.filter(item => item.clientId !== deletedClientId));
+      setSelectedProject(previous => previous?.clientId === deletedClientId ? null : previous);
+      setSelectedTask(previous => previous?.clientId === deletedClientId ? null : previous);
+      setSelectedClient(null);
+      setCurrentView('CLIENTES');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível excluir o cliente.';
+      setMutationError(message);
+      throw error;
+    }
+  };
+
   const handleDeleteTask = async (taskId: string) => {
     try {
       const deleted = await taskService.delete(taskId);
@@ -447,17 +496,43 @@ function MainLayout() {
   const refreshProductCatalog = async () => setProducts(await productService.getCatalog());
 
   const handleCreateUser = async (data: any) => {
-    const created = await userService.create(data);
+    const { avatarFile, removeAvatar: _removeAvatar, ...userData } = data;
+    const created = await userService.create(userData);
     const saved = data.status === 'INACTIVE'
       ? await userService.update(created.id, { status: 'INACTIVE' })
       : created;
-    setUsers(previous => [...previous, saved].sort((a, b) => a.name.localeCompare(b.name)));
+    let savedWithAvatar = saved;
+    if (avatarFile instanceof File) {
+      try {
+        savedWithAvatar = await userService.uploadAvatar(created.id, avatarFile);
+      } catch (error) {
+        setMutationError(error instanceof Error ? `Usuário criado, mas a foto não foi enviada: ${error.message}` : 'Usuário criado, mas a foto não foi enviada.');
+      }
+    }
+    setUsers(previous => [...previous, savedWithAvatar].sort((a, b) => a.name.localeCompare(b.name)));
   };
 
   const handleUpdateUser = async (id: string, data: any) => {
-    const saved = await userService.update(id, data);
+    const { avatarFile, removeAvatar, ...userData } = data;
+    let saved = await userService.update(id, userData);
+    if (avatarFile instanceof File) saved = await userService.uploadAvatar(id, avatarFile);
+    else if (removeAvatar) saved = await userService.removeAvatar(id);
     setUsers(previous => previous.map(user => user.id === id ? saved : user));
     if (currentUser.id === id) setCurrentUser(saved);
+    await loadData();
+    if (currentUser.id === id) setCurrentUser(saved);
+  };
+
+  const handleSaveCurrentUserAvatar = async (file: File | null, remove: boolean) => {
+    const saved = remove
+      ? await userService.removeAvatar(currentUser.id)
+      : file
+        ? await userService.uploadAvatar(currentUser.id, file)
+        : currentUser;
+    setCurrentUser(saved);
+    setUsers(previous => previous.map(user => user.id === saved.id ? saved : user));
+    await loadData();
+    setCurrentUser(saved);
   };
 
   const handleDeleteUser = async (id: string) => {
@@ -651,6 +726,9 @@ function MainLayout() {
                 setIsNewProjectModalOpen(true);
               } : undefined}
               onUpdateProject={handleInlineUpdateProject}
+              onEditClient={isAdministrator(currentUser.role) ? () => setIsEditClientModalOpen(true) : undefined}
+              onSetClientStatus={isAdministrator(currentUser.role) ? handleSetClientStatus : undefined}
+              onDeleteClient={isAdministrator(currentUser.role) ? handleDeleteClient : undefined}
             />
           )}
 
@@ -691,7 +769,7 @@ function MainLayout() {
           )}
 
           {currentView === 'PERFIL' && (
-            <ProfileView currentUser={currentUser} onChangePassword={authService.changePassword} />
+            <ProfileView currentUser={currentUser} onChangePassword={authService.changePassword} onSaveAvatar={handleSaveCurrentUserAvatar} />
           )}
 
           {currentView === 'CONFIGURACOES' && (
@@ -814,6 +892,15 @@ function MainLayout() {
         users={users}
         currentUser={currentUser}
       />
+
+      {selectedClient && <NewClientModal
+        isOpen={isEditClientModalOpen}
+        onClose={() => setIsEditClientModalOpen(false)}
+        client={selectedClient}
+        onUpdateClient={handleUpdateClient}
+        users={users}
+        currentUser={currentUser}
+      />}
 
       {/* Global Cmd+K Search Modal */}
       <GlobalSearchModal

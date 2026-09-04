@@ -723,7 +723,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
                   <div key={comm.id} className="p-3 rounded-xl bg-[#16161c] border border-zinc-800 space-y-1 text-xs">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <img src={comm.userAvatar} alt={comm.userName} className="w-5 h-5 rounded-full object-cover" />
+                        <UserAvatar name={comm.userName} src={comm.userAvatar} className="h-5 w-5" />
                         <span className="font-semibold text-zinc-200">{comm.userName}</span>
                       </div>
                       <span className="text-[10px] text-zinc-500">{comm.createdAt}</span>

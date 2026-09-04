@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Client, User } from '../types';
 import { X, Building, Phone, Mail, User as UserIcon, Tag, Loader2, AlertCircle } from 'lucide-react';
 
 interface NewClientModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAddClient: (newClientData: Partial<Client>) => Promise<void> | void;
+  onAddClient?: (newClientData: Partial<Client>) => Promise<void> | void;
+  client?: Client;
+  onUpdateClient?: (client: Client, updates: Partial<Client>) => Promise<void> | void;
   users: User[];
   currentUser: User;
 }
@@ -14,6 +16,8 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
   isOpen,
   onClose,
   onAddClient,
+  client,
+  onUpdateClient,
   users,
   currentUser
 }) => {
@@ -27,8 +31,24 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const editing = Boolean(client);
 
-  const selectedManager = users.find(u => u.id === leadManagerId) || currentUser;
+  useEffect(() => {
+    if (!isOpen) return;
+    setName(client?.name || '');
+    setCompany(client?.company || '');
+    setContactName(client?.contactName || '');
+    setContactEmail(client?.contactEmail || '');
+    setContactPhone(client?.contactPhone || '');
+    setLeadManagerId(client?.leadManagerId || currentUser.id);
+    setServices(client?.monthlyServices.join(', ') || '');
+    setNotes(client?.notes || '');
+    setError(null);
+  }, [client, currentUser.id, isOpen]);
+
+  const managerOptions = users.filter(user => user.role !== 'COLABORADOR' && (user.accountStatus !== 'INACTIVE' || user.id === client?.leadManagerId));
+  const selectedManager = managerOptions.find(user => user.id === leadManagerId);
+  const unavailableCurrentManager = Boolean(client?.leadManagerId && !selectedManager);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,20 +66,23 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
       .toUpperCase() || 'CL';
 
     try {
-      await onAddClient({
+      const payload: Partial<Client> = {
         name: name.trim(),
         company: company.trim() || name.trim(),
         logo: initials,
         contactName: contactName.trim(),
         contactEmail: contactEmail.trim(),
         contactPhone: contactPhone.trim(),
-        leadManagerId: selectedManager.id,
-        leadManagerName: selectedManager.name,
-        teamMembers: [selectedManager.name],
+        leadManagerId: selectedManager?.id,
+        leadManagerName: selectedManager?.name || client?.leadManagerName || currentUser.name,
+        teamMembers: selectedManager ? [selectedManager.name] : (client?.teamMembers || []),
         statusRelationship: 'ATIVO',
         notes: notes.trim(),
         monthlyServices: services.split(',').map(s => s.trim()).filter(Boolean)
-      });
+      };
+      if (client && onUpdateClient) await onUpdateClient(client, payload);
+      else if (onAddClient) await onAddClient(payload);
+      else throw new Error('Ação de salvamento do cliente não configurada.');
       onClose();
     } catch (err: any) {
       setError(err.message || 'Erro ao salvar cliente no banco de dados.');
@@ -79,9 +102,9 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
           <div>
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
               <Building size={16} className="text-purple-400" />
-              Novo Cliente / Conta da Agência
+              {editing ? 'Editar cliente' : 'Novo Cliente / Conta da Agência'}
             </h2>
-            <p className="text-[11px] text-zinc-400">Cadastre dados da empresa e ponto de contato</p>
+            <p className="text-[11px] text-zinc-400">{editing ? 'Atualize os dados da empresa e do ponto de contato' : 'Cadastre dados da empresa e ponto de contato'}</p>
           </div>
           <button onClick={onClose} className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800">
             <X size={18} />
@@ -175,7 +198,10 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
                 onChange={(e) => setLeadManagerId(e.target.value)}
                 className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-purple-500"
               >
-                {users.map(u => (
+                {unavailableCurrentManager && (
+                  <option value={leadManagerId}>{client?.leadManagerName || 'Gestor atual'} (inativo)</option>
+                )}
+                {managerOptions.map(u => (
                   <option key={u.id} value={u.id}>{u.name} ({u.position})</option>
                 ))}
               </select>
@@ -229,7 +255,7 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
                   <span>Salvando...</span>
                 </>
               ) : (
-                <span>Salvar Cliente</span>
+                <span>{editing ? 'Salvar alterações' : 'Salvar Cliente'}</span>
               )}
             </button>
           </div>
