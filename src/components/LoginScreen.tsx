@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { TecnihubLogo } from './TecnihubLogo';
-import { Lock, Mail, ArrowRight, ShieldCheck, AlertCircle, Loader2, Sparkles, UserCheck } from 'lucide-react';
+import { Lock, Mail, ArrowRight, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react';
 
 export const LoginScreen: React.FC = () => {
   const { login } = useAuth();
-  const [email, setEmail] = useState('admin@tecnihub.com');
-  const [password, setPassword] = useState('Admin@123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -24,12 +24,6 @@ export const LoginScreen: React.FC = () => {
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const handleQuickSelect = (userEmail: string) => {
-    setEmail(userEmail);
-    setPassword('Admin@123');
-    setError(null);
   };
 
   return (
@@ -82,7 +76,6 @@ export const LoginScreen: React.FC = () => {
               <label className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
                 Senha de Acesso
               </label>
-              <span className="text-[10px] text-zinc-500 font-mono">Padrão: Admin@123</span>
             </div>
             <div className="relative">
               <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
@@ -115,70 +108,6 @@ export const LoginScreen: React.FC = () => {
             )}
           </button>
         </form>
-
-        {/* RBAC Test Credentials Selector */}
-        <div className="mt-6 pt-5 border-t border-zinc-800/80">
-          <div className="flex items-center justify-between mb-2.5">
-            <span className="text-[11px] font-bold text-zinc-400 flex items-center gap-1.5">
-              <UserCheck size={13} className="text-emerald-400" />
-              Acesso Rápido por Perfil (Ambiente de Validação):
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 text-[11px]">
-            <button
-              type="button"
-              onClick={() => handleQuickSelect('admin@tecnihub.com')}
-              className={`p-2 rounded-lg border text-left transition-all ${
-                email === 'admin@tecnihub.com'
-                  ? 'bg-purple-950/40 border-purple-500/50 text-purple-200'
-                  : 'bg-[#181820] border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
-              }`}
-            >
-              <div className="font-bold text-white text-[11px]">Super Admin</div>
-              <div className="text-[10px] text-zinc-400 truncate">admin@tecnihub.com</div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleQuickSelect('mariana@tecnihub.com')}
-              className={`p-2 rounded-lg border text-left transition-all ${
-                email === 'mariana@tecnihub.com'
-                  ? 'bg-purple-950/40 border-purple-500/50 text-purple-200'
-                  : 'bg-[#181820] border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
-              }`}
-            >
-              <div className="font-bold text-white text-[11px]">Administrador</div>
-              <div className="text-[10px] text-zinc-400 truncate">mariana@tecnihub.com</div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleQuickSelect('caio@tecnihub.com')}
-              className={`p-2 rounded-lg border text-left transition-all ${
-                email === 'caio@tecnihub.com'
-                  ? 'bg-purple-950/40 border-purple-500/50 text-purple-200'
-                  : 'bg-[#181820] border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
-              }`}
-            >
-              <div className="font-bold text-white text-[11px]">Gestor de Projeto</div>
-              <div className="text-[10px] text-zinc-400 truncate">caio@tecnihub.com</div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleQuickSelect('lucas@tecnihub.com')}
-              className={`p-2 rounded-lg border text-left transition-all ${
-                email === 'lucas@tecnihub.com'
-                  ? 'bg-purple-950/40 border-purple-500/50 text-purple-200'
-                  : 'bg-[#181820] border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
-              }`}
-            >
-              <div className="font-bold text-white text-[11px]">Colaborador</div>
-              <div className="text-[10px] text-zinc-400 truncate">lucas@tecnihub.com</div>
-            </button>
-          </div>
-        </div>
 
         {/* Footer Security Badge */}
         <div className="mt-5 text-center text-[10px] text-zinc-500 flex items-center justify-center gap-1.5">

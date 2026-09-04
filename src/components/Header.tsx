@@ -151,7 +151,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Role Switcher (Hidden or Compact on small screens) */}
         <div className="hidden sm:block">
-          <UserRoleSwitcher currentUser={currentUser} onSelectUser={onSelectUser} availableUsers={users} />
+          <UserRoleSwitcher currentUser={currentUser} />
         </div>
 
         {/* Notifications Icon with Badge */}

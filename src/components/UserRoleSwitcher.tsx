@@ -1,19 +1,15 @@
 import React, { useState } from 'react';
 import { User, UserRole } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { Shield, ShieldAlert, UserCheck, Briefcase, ChevronDown, Check, LogOut, Loader2 } from 'lucide-react';
+import { Shield, ShieldAlert, UserCheck, Briefcase, ChevronDown, LogOut } from 'lucide-react';
 
 interface UserRoleSwitcherProps {
   currentUser: User;
-  onSelectUser: (user: User) => void;
-  availableUsers?: User[];
 }
 
-export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser, onSelectUser, availableUsers = [] }) => {
+export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const { logout, login } = useAuth();
-  const [isSwitching, setIsSwitching] = useState(false);
-  const [switchError, setSwitchError] = useState('');
+  const { logout } = useAuth();
 
   const getRoleIcon = (role: UserRole) => {
     switch (role) {
@@ -41,33 +37,12 @@ export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser,
     }
   };
 
-  const handleSwitchUser = async (targetUser: User) => {
-    if (targetUser.id === currentUser.id) {
-      setIsOpen(false);
-      return;
-    }
-    setIsSwitching(true);
-    setSwitchError('');
-    try {
-      // Autenticar com a conta do usuário alvo para aplicar as regras de RBAC reais no backend
-      await login(targetUser.email, 'Admin@123');
-      onSelectUser(targetUser);
-      setIsOpen(false);
-    } catch {
-      setSwitchError('Não foi possível autenticar esse perfil.');
-    } finally {
-      setIsSwitching(false);
-    }
-  };
-
-  const displayUsers = availableUsers.length > 0 ? availableUsers : [currentUser];
-
   return (
     <div className="relative">
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 transition-all text-xs text-left"
-        title="Gerenciar sessão ou alternar perfil"
+        title="Gerenciar sessão"
       >
         <img
           src={currentUser.avatar}
@@ -92,48 +67,16 @@ export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser,
           <div className="absolute right-0 mt-1.5 w-72 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-100">
             <div className="px-2 py-1.5 mb-1 border-b border-zinc-800/80">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                Alternar Sessão / Perfil RBAC
+                Sessão atual
               </span>
-              <p className="text-[10px] text-zinc-500 mt-0.5">
-                Valide os níveis de permissão e visibilidade de dados
-              </p>
             </div>
 
-            <div className="space-y-1 max-h-60 overflow-y-auto">
-              {switchError && <p className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1.5 text-[10px] text-rose-300">{switchError}</p>}
-              {displayUsers.map((user) => {
-                const isSelected = user.id === currentUser.id;
-                return (
-                  <button
-                    key={user.id}
-                    disabled={isSwitching}
-                    onClick={() => handleSwitchUser(user)}
-                    className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-colors ${
-                      isSelected ? 'bg-zinc-800/90 text-white' : 'hover:bg-zinc-800/50 text-zinc-300'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <img
-                        src={user.avatar}
-                        alt={user.name}
-                        className="w-7 h-7 rounded-full object-cover border border-zinc-700 shrink-0"
-                      />
-                      <div className="flex flex-col min-w-0">
-                        <span className="text-xs font-semibold text-zinc-100 truncate">{user.name}</span>
-                        <span className="text-[10px] text-zinc-400 truncate">{user.position}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded border font-medium flex items-center gap-1 ${getRoleBadgeStyle(user.role)}`}>
-                        {getRoleIcon(user.role)}
-                        {user.role === 'ADMIN_PRINCIPAL' ? 'MASTER' : user.role === 'GESTOR_PROJETO' ? 'GESTOR' : user.role === 'ADMIN' ? 'ADMIN' : 'COLAB'}
-                      </span>
-                      {isSelected && <Check size={14} className="text-emerald-400" />}
-                    </div>
-                  </button>
-                );
-              })}
+            <div className="flex items-center gap-2.5 rounded-lg bg-zinc-800/70 p-2">
+              <img src={currentUser.avatar} alt={currentUser.name} className="h-7 w-7 shrink-0 rounded-full border border-zinc-700 object-cover" />
+              <div className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-semibold text-zinc-100">{currentUser.name}</span>
+                <span className="block truncate text-[10px] text-zinc-400">{currentUser.email}</span>
+              </div>
             </div>
 
             {/* Logout Action */}

@@ -284,6 +284,33 @@ test('rotas aplicam a matriz operacional de RBAC e preservam status em uso', asy
     const reorderStatusesResponse = await request('/api/products/SITE/statuses/reorder', adminToken, 'PUT', { ids: reorderedStatusIds });
     assert.equal(reorderStatusesResponse.status, 200);
     assert.deepEqual((await reorderStatusesResponse.json() as any).statuses.map((status: any) => status.id), reorderedStatusIds);
+
+    assert.equal((await request(`/api/users/${ids.collaborator}`, managerToken, 'DELETE')).status, 403);
+    assert.equal((await request(`/api/users/${ids.admin}`, adminToken, 'DELETE')).status, 403);
+    const linksBeforeDelete = await database.query<{ memberships: number; assignments: number }>(
+      `SELECT
+         (SELECT COUNT(*)::integer FROM project_members WHERE user_id = $1) AS memberships,
+         (SELECT COUNT(*)::integer FROM task_assignees WHERE user_id = $1) AS assignments`,
+      [ids.collaborator]
+    );
+    assert.ok(Number(linksBeforeDelete.rows[0].memberships) > 0);
+    assert.ok(Number(linksBeforeDelete.rows[0].assignments) > 0);
+    assert.equal((await request(`/api/users/${ids.collaborator}`, adminToken, 'DELETE')).status, 200);
+    assert.equal((await userRepository.findById(ids.collaborator))?.status, 'INACTIVE');
+    const linksAfterDelete = await database.query<{ memberships: number; assignments: number }>(
+      `SELECT
+         (SELECT COUNT(*)::integer FROM project_members WHERE user_id = $1) AS memberships,
+         (SELECT COUNT(*)::integer FROM task_assignees WHERE user_id = $1) AS assignments`,
+      [ids.collaborator]
+    );
+    assert.deepEqual(linksAfterDelete.rows[0], linksBeforeDelete.rows[0]);
+    const activeUsersResponse = await request('/api/users', adminToken, 'GET');
+    assert.equal(activeUsersResponse.status, 200);
+    assert.equal((await activeUsersResponse.json() as any).users.some((user: any) => user.id === ids.collaborator), false);
+    const allUsersResponse = await request('/api/users?includeInactive=true', adminToken, 'GET');
+    assert.equal(allUsersResponse.status, 200);
+    assert.equal((await allUsersResponse.json() as any).users.some((user: any) => user.id === ids.collaborator), true);
+    assert.equal((await request('/api/users', collaboratorToken, 'GET')).status, 403);
   } finally {
     if (server) await new Promise<void>(resolve => server!.close(() => resolve()));
     setDatabasePoolForTests(null);

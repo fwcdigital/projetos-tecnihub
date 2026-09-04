@@ -460,6 +460,11 @@ function MainLayout() {
     if (currentUser.id === id) setCurrentUser(saved);
   };
 
+  const handleDeleteUser = async (id: string) => {
+    await userService.remove(id);
+    setUsers(previous => previous.filter(user => user.id !== id));
+  };
+
   // Handler: Navigate to Project Detail
   const handleNavigateProjectDetail = (project: Project) => {
     setSelectedProject(project);
@@ -658,6 +663,7 @@ function MainLayout() {
               currentUser={currentUser}
               onCreateUser={handleCreateUser}
               onUpdateUser={handleUpdateUser}
+              onDeleteUser={handleDeleteUser}
               onSelectTask={handleSelectTask}
               onToggleComplete={handleToggleComplete}
               onUpdateTask={handleUpdateTask}

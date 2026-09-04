@@ -66,5 +66,7 @@ export const userService = {
     }
     const res = await api.put<{ user: any }>(`/api/users/${id}`, payload);
     return formatUserFromBackend(res.user);
-  }
+  },
+
+  remove: (id: string): Promise<{ removed: boolean; deactivated: boolean }> => api.delete(`/api/users/${id}`)
 };

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Project, Task, User } from '../types';
-import { Plus, Pencil } from 'lucide-react';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { TaskRow } from '../components/TaskRow';
 import { CompletedTasksSection } from '../components/CompletedTasksSection';
 import { UserAvatar } from '../components/UserAvatar';
@@ -18,6 +18,7 @@ interface TeamViewProps {
   currentUser: User;
   onCreateUser: (data: any) => Promise<void>;
   onUpdateUser: (id: string, data: any) => Promise<void>;
+  onDeleteUser: (id: string) => Promise<void>;
 }
 
 export const TeamView: React.FC<TeamViewProps> = ({
@@ -30,11 +31,14 @@ export const TeamView: React.FC<TeamViewProps> = ({
   onUpdateTask,
   currentUser,
   onCreateUser,
-  onUpdateUser
+  onUpdateUser,
+  onDeleteUser
 }) => {
   const [selectedUser, setSelectedUser] = useState<User>(users[0] || currentUser);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingUser, setEditingUser] = useState<User | null | undefined>(undefined);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  const [userActionError, setUserActionError] = useState('');
   const mayManageUsers = canManageUsers(currentUser.role);
   const today = new Date().toISOString().slice(0, 10);
 
@@ -48,6 +52,25 @@ export const TeamView: React.FC<TeamViewProps> = ({
   const userCompletedTasks = completedTasks.filter(t => isAssignedTo(t, selectedUser.id));
   const overdueCount = userTasks.filter(t => t.dueDate < today && !t.statusCompleted).length;
   const todayCount = userTasks.filter(t => t.dueDate === today && !t.statusCompleted).length;
+  const canDeleteSelected = mayManageUsers
+    && selectedUser.id !== currentUser.id
+    && (currentUser.role === 'ADMIN_PRINCIPAL' || selectedUser.role !== 'ADMIN_PRINCIPAL');
+
+  const deleteSelectedUser = async () => {
+    if (!canDeleteSelected) return;
+    if (!window.confirm(`Excluir ${selectedUser.name}?\n\nO acesso será desativado e o histórico do usuário será preservado.`)) return;
+    setDeletingUserId(selectedUser.id);
+    setUserActionError('');
+    try {
+      const replacement = users.find(user => user.id !== selectedUser.id) || currentUser;
+      await onDeleteUser(selectedUser.id);
+      setSelectedUser(replacement);
+    } catch (error: any) {
+      setUserActionError(error.message || 'Não foi possível excluir o usuário.');
+    } finally {
+      setDeletingUserId(null);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-[1800px] space-y-6 p-4 animate-in fade-in duration-150 sm:p-6">
@@ -109,6 +132,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
 
       {/* Selected Member Details & Assigned Tasks */}
       <div className="space-y-4 pt-2">
+        {userActionError && <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{userActionError}</div>}
         <div className="p-4 rounded-2xl bg-[#121216] border border-zinc-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <UserAvatar name={selectedUser.name} src={selectedUser.avatar} className="w-12 h-12" />
@@ -125,6 +149,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
 
           <div className="flex items-center gap-3 text-xs">
             {mayManageUsers && (currentUser.role === 'ADMIN_PRINCIPAL' || selectedUser.role !== 'ADMIN_PRINCIPAL') && <button onClick={() => setEditingUser(selectedUser)} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-200"><Pencil size={12} />Editar</button>}
+            {canDeleteSelected && <button type="button" disabled={deletingUserId === selectedUser.id} onClick={() => void deleteSelectedUser()} className="flex items-center gap-1 rounded-lg border border-rose-900/60 bg-rose-950/20 px-3 py-1.5 text-rose-300 hover:bg-rose-950/40 disabled:opacity-50"><Trash2 size={12} />{deletingUserId === selectedUser.id ? 'Excluindo...' : 'Excluir'}</button>}
             <div className="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800">
               <span className="text-[10px] text-zinc-500 block">Total Atribuídas</span>
               <strong className="text-white font-mono">{userTasks.length}</strong>

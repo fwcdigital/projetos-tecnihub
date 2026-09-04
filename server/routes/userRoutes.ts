@@ -11,15 +11,49 @@ const USER_ROLES: UserRole[] = ['SUPER_ADMIN', 'ADMIN', 'PROJECT_MANAGER', 'COLL
 // GET /api/users - Listar usuários
 userRouter.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { role, status, search } = req.query;
+    const { role, status, search, includeInactive } = req.query;
+    if (includeInactive && includeInactive !== 'true' && includeInactive !== 'false') {
+      return res.status(400).json({ error: 'O filtro includeInactive deve ser true ou false.' });
+    }
+    if (includeInactive === 'true' && !canManageUsers(req.user)) {
+      return res.status(403).json({ error: 'Você não tem permissão para listar usuários inativos.' });
+    }
     const users = await userRepository.findAll({
       role: role as any,
-      status: status as any,
+      status: (includeInactive === 'true' ? status : (status || 'ACTIVE')) as any,
       search: search as string
     });
     return res.json({ users });
   } catch (error) {
     return res.status(500).json({ error: 'Erro ao buscar usuários.' });
+  }
+});
+
+// DELETE /api/users/:id - Exclusão lógica para preservar vínculos e histórico
+userRouter.delete('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const targetId = req.params.id;
+    if (!isUuid(targetId)) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    if (!canManageUsers(req.user)) {
+      return res.status(403).json({ error: 'Você não tem permissão para excluir usuários.' });
+    }
+    if (req.user?.id === targetId) {
+      return res.status(403).json({ error: 'Você não pode excluir a própria conta.' });
+    }
+
+    const targetUser = await userRepository.findById(targetId);
+    if (!targetUser) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    if (targetUser.role === 'SUPER_ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Administradores não podem excluir contas SUPER_ADMIN.' });
+    }
+
+    if (targetUser.status !== 'INACTIVE') {
+      await userRepository.update(targetId, { status: 'INACTIVE' });
+    }
+    return res.json({ removed: true, deactivated: true });
+  } catch (error) {
+    console.error('Erro ao excluir usuário:', error);
+    return res.status(500).json({ error: 'Erro ao excluir usuário.' });
   }
 });
 
