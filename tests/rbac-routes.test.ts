@@ -18,6 +18,7 @@ import { authRouter } from '../server/routes/authRoutes.js';
 import { routineRouter } from '../server/routes/routineRoutes.js';
 import { productRouter } from '../server/routes/productRoutes.js';
 import { clientRouter } from '../server/routes/clientRoutes.js';
+import { notificationRouter } from '../server/routes/notificationRoutes.js';
 
 const migrationsDirectory = path.resolve(process.cwd(), 'server', 'database', 'migrations');
 
@@ -117,6 +118,7 @@ test('rotas aplicam a matriz operacional de RBAC e preservam status em uso', asy
     app.use('/api/auth', authRouter);
     app.use('/api/routines', routineRouter);
     app.use('/api/clients', clientRouter);
+    app.use('/api/notifications', notificationRouter);
     server = app.listen(0, '127.0.0.1');
     await new Promise<void>(resolve => server!.once('listening', resolve));
     const address = server.address();
@@ -136,6 +138,155 @@ test('rotas aplicam a matriz operacional de RBAC e preservam status em uso', asy
     const managerToken = await token(ids.manager);
     const adminToken = await token(ids.admin);
     const superAdminToken = await token(ids.superAdmin);
+
+    const mentionableResponse = await request(`/api/tasks/${task.id}/mentionable-users`, adminToken, 'GET');
+    assert.equal(mentionableResponse.status, 200);
+    const mentionableUsers = (await mentionableResponse.json() as any).users;
+    assert.ok(mentionableUsers.some((user: any) => user.id === ids.collaborator));
+
+    const mentionedCommentResponse = await request(`/api/tasks/${task.id}/comments`, adminToken, 'POST', {
+      content: '@Colaborador pode revisar isso?', mentionUserIds: [ids.collaborator]
+    });
+    assert.equal(mentionedCommentResponse.status, 201);
+    const mentionedTask = (await mentionedCommentResponse.json() as any).task;
+    assert.equal(mentionedTask.comments[0].mentions[0].userId, ids.collaborator);
+    const collaboratorNotificationsResponse = await request('/api/notifications', collaboratorToken, 'GET');
+    assert.equal(collaboratorNotificationsResponse.status, 200);
+    const collaboratorNotifications = (await collaboratorNotificationsResponse.json() as any).notifications;
+    assert.equal(collaboratorNotifications.length, 1);
+    assert.equal(collaboratorNotifications[0].type, 'MENTION');
+    assert.equal((await database.query<{ total: number }>('SELECT COUNT(*)::integer AS total FROM notifications WHERE user_id = $1 AND comment_id = $2', [ids.collaborator, collaboratorNotifications[0].commentId])).rows[0].total, 1);
+
+    const markReadResponse = await request(`/api/notifications/${collaboratorNotifications[0].id}/read`, collaboratorToken, 'PATCH');
+    assert.equal(markReadResponse.status, 200);
+    assert.ok((await markReadResponse.json() as any).notification.readAt);
+    assert.equal((await (await request('/api/notifications', collaboratorToken, 'GET')).json() as any).notifications[0].read, true);
+    assert.equal((await request(`/api/notifications/${collaboratorNotifications[0].id}/read`, managerToken, 'PATCH')).status, 404);
+    assert.equal((await (await request('/api/notifications', managerToken, 'GET')).json() as any).notifications.length, 0);
+
+    assert.equal((await request(`/api/tasks/${task.id}/comments`, managerToken, 'POST', { content: 'Comentário sem menção.' })).status, 201);
+    const afterCommonComment = (await (await request('/api/notifications', collaboratorToken, 'GET')).json() as any).notifications;
+    assert.equal(afterCommonComment.filter((item: any) => item.type === 'COMMENT').length, 1);
+    const beforeSelfComment = Number((await database.query<{ total: number }>('SELECT COUNT(*)::integer AS total FROM notifications WHERE user_id = $1', [ids.collaborator])).rows[0].total);
+    assert.equal((await request(`/api/tasks/${task.id}/comments`, collaboratorToken, 'POST', { content: 'Comentário do próprio responsável.' })).status, 201);
+    assert.equal(Number((await database.query<{ total: number }>('SELECT COUNT(*)::integer AS total FROM notifications WHERE user_id = $1', [ids.collaborator])).rows[0].total), beforeSelfComment);
+    assert.equal((await request(`/api/tasks/${task.id}/comments`, adminToken, 'POST', { content: '@Sem Vínculo não deve acessar.', mentionUserIds: [ids.collaboratorTwo === ids.collaborator ? ids.collaborator : '00000000-0000-4000-8000-000000000099'] })).status, 400);
+
+    const editableCommentResponse = await request(`/api/tasks/${task.id}/comments`, collaboratorToken, 'POST', { content: 'Comentário editável.' });
+    assert.equal(editableCommentResponse.status, 201);
+    const editableComment = (await editableCommentResponse.json() as any).task.comments.find((comment: any) => comment.content === 'Comentário editável.');
+    assert.ok(editableComment);
+    const editCommentResponse = await request(`/api/tasks/${task.id}/comments/${editableComment.id}`, collaboratorToken, 'PUT', {
+      content: '@Gestor comentário editado.', mentionUserIds: [ids.manager]
+    });
+    assert.equal(editCommentResponse.status, 200);
+    const editedComment = (await editCommentResponse.json() as any).task.comments.find((comment: any) => comment.id === editableComment.id);
+    assert.equal(editedComment.content, '@Gestor comentário editado.');
+    assert.equal(editedComment.mentions[0].userId, ids.manager);
+    assert.ok(editedComment.updatedAt);
+    assert.equal((await request(`/api/tasks/${task.id}/comments/${editableComment.id}`, adminToken, 'PUT', { content: 'Admin não altera autoria alheia.' })).status, 403);
+
+    const replyResponse = await request(`/api/tasks/${task.id}/comments`, managerToken, 'POST', {
+      content: '@Admin pode verificar?', mentionUserIds: [ids.admin], parentCommentId: editableComment.id
+    });
+    assert.equal(replyResponse.status, 201);
+    const repliedTask = (await replyResponse.json() as any).task;
+    const replyComment = repliedTask.comments.find((comment: any) => comment.parentCommentId === editableComment.id && comment.content === '@Admin pode verificar?');
+    assert.ok(replyComment);
+    assert.equal(replyComment.mentions[0].userId, ids.admin);
+    const replyNotification = await database.query<{ total: number; type: string; title: string }>(
+      'SELECT COUNT(*)::integer AS total, MIN(type) AS type, MIN(title) AS title FROM notifications WHERE user_id = $1 AND comment_id = $2',
+      [ids.collaborator, replyComment.id]
+    );
+    assert.equal(Number(replyNotification.rows[0].total), 1);
+    assert.equal(replyNotification.rows[0].type, 'COMMENT');
+    assert.match(replyNotification.rows[0].title, /respondeu ao seu comentário/i);
+    assert.equal((await request(`/api/tasks/${task.id}/comments/${editableComment.id}`, collaboratorToken, 'PUT', { content: 'Não pode editar após resposta.' })).status, 403);
+    assert.equal((await request(`/api/tasks/${task.id}/comments/${editableComment.id}`, collaboratorToken, 'DELETE')).status, 403);
+
+    const nestedReplyResponse = await request(`/api/tasks/${task.id}/comments`, adminToken, 'POST', {
+      content: 'Resposta permanece em um nível.', parentCommentId: replyComment.id
+    });
+    assert.equal(nestedReplyResponse.status, 201);
+    const nestedReply = (await nestedReplyResponse.json() as any).task.comments.find((comment: any) => comment.content === 'Resposta permanece em um nível.');
+    assert.equal(nestedReply.parentCommentId, editableComment.id);
+
+    const adminDeleteRootResponse = await request(`/api/tasks/${task.id}/comments/${editableComment.id}`, adminToken, 'DELETE');
+    assert.equal(adminDeleteRootResponse.status, 200);
+    const afterRootDelete = (await adminDeleteRootResponse.json() as any).task;
+    const deletedRoot = afterRootDelete.comments.find((comment: any) => comment.id === editableComment.id);
+    assert.ok(deletedRoot.deletedAt);
+    assert.equal(deletedRoot.content, '');
+    assert.equal(afterRootDelete.comments.filter((comment: any) => comment.parentCommentId === editableComment.id && !comment.deletedAt).length, 2);
+    assert.equal(afterRootDelete.commentCount, afterRootDelete.comments.filter((comment: any) => !comment.deletedAt).length);
+
+    const disposableCommentResponse = await request(`/api/tasks/${task.id}/comments`, collaboratorToken, 'POST', { content: 'Comentário descartável.' });
+    const disposableComment = (await disposableCommentResponse.json() as any).task.comments.find((comment: any) => comment.content === 'Comentário descartável.');
+    assert.equal((await request(`/api/tasks/${task.id}/comments/${disposableComment.id}`, managerToken, 'DELETE')).status, 403);
+    assert.equal((await request(`/api/tasks/${task.id}/comments/${disposableComment.id}`, collaboratorToken, 'DELETE')).status, 200);
+    assert.ok((await taskRepository.findById(task.id))?.comments.find((comment: any) => comment.id === disposableComment.id).deletedAt);
+
+    const oldCommentResponse = await request(`/api/tasks/${task.id}/comments`, managerToken, 'POST', { content: 'Comentário antigo.' });
+    const oldComment = (await oldCommentResponse.json() as any).task.comments.find((comment: any) => comment.content === 'Comentário antigo.');
+    await database.query("UPDATE task_comments SET created_at = CURRENT_TIMESTAMP - INTERVAL '6 minutes', updated_at = CURRENT_TIMESTAMP - INTERVAL '6 minutes' WHERE id = $1", [oldComment.id]);
+    assert.equal((await request(`/api/tasks/${task.id}/comments/${oldComment.id}`, managerToken, 'PUT', { content: 'Edição fora do prazo.' })).status, 403);
+    assert.equal((await request(`/api/tasks/${task.id}/comments/${oldComment.id}`, managerToken, 'DELETE')).status, 403);
+    assert.equal((await request(`/api/tasks/${task.id}/comments/${oldComment.id}`, superAdminToken, 'DELETE')).status, 200);
+
+    const siteTemplateResponse = await request('/api/products/SITE/task-template', managerToken, 'GET');
+    assert.equal(siteTemplateResponse.status, 200);
+    assert.equal((await siteTemplateResponse.json() as any).items.length, 13);
+    assert.equal((await request('/api/products/SITE/task-template', collaboratorToken, 'POST', { title: 'Tentativa indevida' })).status, 403);
+    const addedTemplateTaskResponse = await request('/api/products/SITE/task-template', adminToken, 'POST', {
+      title: 'Configurar Google Analytics', statusId: 'SITE_DESIGN_LAYOUT', priority: 'ALTA'
+    });
+    assert.equal(addedTemplateTaskResponse.status, 201);
+    const addedTemplateTask = (await addedTemplateTaskResponse.json() as any).item;
+    assert.equal(addedTemplateTask.status_id, 'SITE_DESIGN_LAYOUT');
+    assert.equal(addedTemplateTask.priority, 'ALTA');
+    const updatedTemplateTaskResponse = await request(`/api/products/SITE/task-template/${addedTemplateTask.id}`, superAdminToken, 'PUT', {
+      title: 'Configurar Analytics', statusId: null, priority: 'NORMAL'
+    });
+    assert.equal(updatedTemplateTaskResponse.status, 200);
+    assert.equal((await updatedTemplateTaskResponse.json() as any).item.status_id, null);
+    const templateWithAddedTask = (await (await request('/api/products/SITE/task-template', adminToken, 'GET')).json() as any).items;
+    const reorderedTemplateIds = [addedTemplateTask.id, ...templateWithAddedTask.filter((item: any) => item.id !== addedTemplateTask.id).map((item: any) => item.id)];
+    assert.equal((await request('/api/products/SITE/task-template/reorder', adminToken, 'PUT', { ids: reorderedTemplateIds })).status, 200);
+    assert.equal(((await (await request('/api/products/SITE/task-template', adminToken, 'GET')).json() as any).items[0].id), addedTemplateTask.id);
+    assert.equal((await request(`/api/products/SITE/task-template/${addedTemplateTask.id}`, adminToken, 'DELETE')).status, 200);
+    assert.equal((await (await request('/api/products/SITE/task-template', adminToken, 'GET')).json() as any).items.length, 13);
+
+    const idempotentProjectRequest = '70000000-0000-4000-8000-000000000001';
+    const templatedProjectPayload = {
+      name: 'Projeto de modelo idempotente', client_id: client.id, product_id: 'SITE', product_status_id: 'SITE_DESIGN_LAYOUT',
+      manager_id: ids.admin, priority: 'HIGH', due_date: '2026-10-31', team_user_ids: [ids.collaborator],
+      apply_task_template: true, creation_request_id: idempotentProjectRequest
+    };
+    const templatedProjectResponse = await request('/api/projects', adminToken, 'POST', templatedProjectPayload);
+    assert.equal(templatedProjectResponse.status, 201);
+    const templatedProject = (await templatedProjectResponse.json() as any).project;
+    const repeatedProjectResponse = await request('/api/projects', adminToken, 'POST', templatedProjectPayload);
+    assert.equal(repeatedProjectResponse.status, 201);
+    assert.equal((await repeatedProjectResponse.json() as any).project.id, templatedProject.id);
+    const clonedTasks = await database.query<{ title: string; status: string; priority: string; responsible_user_id: string }>(
+      'SELECT title, status, priority, responsible_user_id FROM tasks WHERE project_id = $1 ORDER BY created_at, title',
+      [templatedProject.id]
+    );
+    assert.equal(clonedTasks.rows.length, 13);
+    assert.ok(clonedTasks.rows.every(item => item.status === 'SITE_PLANNING'));
+    assert.ok(clonedTasks.rows.every(item => item.priority === 'NORMAL'));
+    assert.ok(clonedTasks.rows.every(item => item.responsible_user_id === ids.admin));
+    assert.equal(Number((await database.query<{ total: number }>('SELECT COUNT(*)::integer AS total FROM task_assignees assignee INNER JOIN tasks task ON task.id = assignee.task_id WHERE task.project_id = $1', [templatedProject.id])).rows[0].total), 13);
+    assert.equal((await request(`/api/projects/${templatedProject.id}/permanent`, adminToken, 'DELETE', { confirmationName: templatedProject.name })).status, 200);
+    assert.ok(await clientRepository.findById(client.id));
+
+    const noTemplateProjectResponse = await request('/api/projects', adminToken, 'POST', {
+      ...templatedProjectPayload, name: 'Projeto sem modelo', creation_request_id: '70000000-0000-4000-8000-000000000002', apply_task_template: false
+    });
+    assert.equal(noTemplateProjectResponse.status, 201);
+    const noTemplateProject = (await noTemplateProjectResponse.json() as any).project;
+    assert.equal(Number((await database.query<{ total: number }>('SELECT COUNT(*)::integer AS total FROM tasks WHERE project_id = $1', [noTemplateProject.id])).rows[0].total), 0);
+    assert.equal((await request(`/api/projects/${noTemplateProject.id}/permanent`, superAdminToken, 'DELETE', { confirmationName: noTemplateProject.name })).status, 200);
 
     const rawRequest = (pathName: string, authToken: string, method: string, body: Uint8Array, contentType: string) => originalFetch(`${baseUrl}${pathName}`, {
       method,
@@ -201,11 +352,16 @@ test('rotas aplicam a matriz operacional de RBAC e preservam status em uso', asy
     const editedClientResponse = await request(`/api/clients/${client.id}`, adminToken, 'PUT', {
       name: 'Cliente atualizado', company_name: 'Cliente atualizado Ltda', contact_name: 'Contato atualizado',
       email: 'cliente.atualizado@example.com', phone: '11999999999', lead_manager_id: ids.manager,
-      notes: 'Persistido pela API', monthly_services: ['SEO'], logo: 'CA'
+      notes: 'Persistido pela API', product_ids: ['SEO', 'SITE'], logo: 'CA'
     });
     assert.equal(editedClientResponse.status, 200);
     assert.equal((await editedClientResponse.json() as any).client.name, 'Cliente atualizado');
     assert.equal((await clientRepository.findById(client.id))?.email, 'cliente.atualizado@example.com');
+    assert.deepEqual((await clientRepository.findById(client.id))?.products.map(product => product.id), ['SITE', 'SEO']);
+    assert.equal((await request(`/api/clients/${client.id}`, adminToken, 'PUT', { product_ids: ['INEXISTENTE'] })).status, 400);
+    const removeClientProductResponse = await request(`/api/clients/${client.id}`, adminToken, 'PUT', { product_ids: ['SITE'] });
+    assert.equal(removeClientProductResponse.status, 200);
+    assert.deepEqual((await clientRepository.findById(client.id))?.products.map(product => product.id), ['SITE']);
 
     assert.equal((await request(`/api/clients/${client.id}/status`, adminToken, 'PATCH', { status: 'INACTIVE' })).status, 200);
     assert.equal((await clientRepository.findById(client.id))?.status, 'INACTIVE');
@@ -216,7 +372,7 @@ test('rotas aplicam a matriz operacional de RBAC e preservam status em uso', asy
     assert.equal((await clientRepository.findById(client.id))?.status, 'ACTIVE');
 
     const fakeClientResponse = await request('/api/clients', adminToken, 'POST', {
-      name: 'Cliente fake com histórico', company_name: 'Teste', lead_manager_id: ids.admin
+      name: 'Cliente fake com histórico', company_name: 'Teste', lead_manager_id: ids.admin, product_ids: ['SEO']
     });
     assert.equal(fakeClientResponse.status, 201);
     const fakeClient = (await fakeClientResponse.json() as any).client;
@@ -277,6 +433,77 @@ test('rotas aplicam a matriz operacional de RBAC e preservam status em uso', asy
     assert.equal(snapshot.rows[0].snapshot.client.name, fakeClient.name);
     assert.equal(snapshot.rows[0].snapshot.projects.length, 1);
     assert.equal(snapshot.rows[0].snapshot.tasks.length, 2);
+
+    const disposableProject = await projectRepository.create({
+      name: 'Projeto descartável com histórico', description: 'Projeto criado para validar exclusão total', client_id: client.id,
+      project_type: 'WEBSITE', manager_id: ids.admin, status: 'PLANNING', priority: 'NORMAL', start_date: null,
+      due_date: '2026-09-30', progress: 0, is_recurring: false, created_by: ids.admin
+    }, [ids.collaborator]);
+    const disposableTask = await taskRepository.create({
+      project_id: disposableProject.id, title: 'Tarefa descartável', description: '', responsible_user_id: ids.collaborator,
+      assignee_ids: [ids.collaborator, ids.admin], status: 'A_FAZER', priority: 'NORMAL', start_date: null,
+      due_date: '2026-09-28', due_time: null, completed_at: null, created_by: ids.admin
+    });
+    const disposableSubtask = await taskRepository.create({
+      project_id: disposableProject.id, parent_task_id: disposableTask.id, title: 'Subtarefa descartável', description: '',
+      responsible_user_id: ids.admin, assignee_ids: [ids.admin], status: 'A_FAZER', priority: 'NORMAL', start_date: null,
+      due_date: '2026-09-27', due_time: null, completed_at: null, created_by: ids.admin
+    });
+    await database.query('INSERT INTO checklist_items (task_id, title) VALUES ($1, $2)', [disposableSubtask.id, 'Checklist descartável']);
+    await database.query('INSERT INTO task_comments (task_id, user_id, content) VALUES ($1, $2, $3)', [disposableTask.id, ids.admin, 'Comentário descartável']);
+    await database.query(
+      `INSERT INTO project_resources (project_id, kind, name, url, created_by)
+       VALUES ($1, 'GOOGLE_DRIVE', 'Referência descartável', 'https://drive.google.com/disposable', $2)`,
+      [disposableProject.id, ids.admin]
+    );
+    await routineRepository.upsert({
+      source_task_id: disposableTask.id, frequency: 'SEMANAL', rule_text: 'Rotina descartável', next_occurrence_date: '2026-10-05', created_by: ids.admin
+    });
+
+    assert.equal((await request(`/api/projects/${disposableProject.id}/account-status`, managerToken, 'PATCH', { status: 'INACTIVE' })).status, 403);
+    assert.equal((await request(`/api/projects/${disposableProject.id}/account-status`, collaboratorToken, 'PATCH', { status: 'INACTIVE' })).status, 403);
+    assert.equal((await request(`/api/projects/${disposableProject.id}/permanent`, managerToken, 'DELETE', { confirmationName: disposableProject.name })).status, 403);
+    assert.equal((await request(`/api/projects/${disposableProject.id}/permanent`, collaboratorToken, 'DELETE', { confirmationName: disposableProject.name })).status, 403);
+    assert.equal((await request(`/api/projects/${disposableProject.id}/account-status`, adminToken, 'PATCH', { status: 'INACTIVE' })).status, 200);
+    assert.equal((await projectRepository.findById(disposableProject.id))?.account_status, 'INACTIVE');
+    const defaultProjectsWhileArchived = await request('/api/projects', adminToken, 'GET');
+    assert.equal(defaultProjectsWhileArchived.status, 200);
+    assert.equal((await defaultProjectsWhileArchived.json() as any).projects.some((item: any) => item.id === disposableProject.id), false);
+    const archivedProjectsResponse = await request('/api/projects?accountStatus=INACTIVE', adminToken, 'GET');
+    assert.equal(archivedProjectsResponse.status, 200);
+    assert.ok((await archivedProjectsResponse.json() as any).projects.some((item: any) => item.id === disposableProject.id));
+    assert.equal((await request(`/api/projects/${disposableProject.id}/account-status`, superAdminToken, 'PATCH', { status: 'ACTIVE' })).status, 200);
+    assert.equal((await projectRepository.findById(disposableProject.id))?.account_status, 'ACTIVE');
+
+    assert.equal((await request(`/api/projects/${disposableProject.id}/permanent`, adminToken, 'DELETE', { confirmationName: 'nome incorreto' })).status, 400);
+    assert.ok(await projectRepository.findById(disposableProject.id));
+    const projectDeletionResponse = await request(`/api/projects/${disposableProject.id}/permanent`, adminToken, 'DELETE', { confirmationName: disposableProject.name });
+    assert.equal(projectDeletionResponse.status, 200);
+    const projectDeletion = await projectDeletionResponse.json() as any;
+    assert.equal(projectDeletion.deleted, true);
+    assert.ok(projectDeletion.snapshotId);
+    assert.equal(projectDeletion.clientId, client.id);
+    assert.equal(projectDeletion.deletedRelations.tasks, 2);
+    assert.equal(projectDeletion.deletedRelations.projectResources, 1);
+    assert.equal(projectDeletion.deletedRelations.recurrenceRules, 1);
+    assert.equal(projectDeletion.pendingStorageCleanup, 0);
+    assert.equal(await projectRepository.findById(disposableProject.id), null);
+    assert.ok(await clientRepository.findById(client.id));
+    assert.equal(Number((await database.query<{ total: number }>('SELECT COUNT(*)::integer AS total FROM tasks WHERE project_id = $1', [disposableProject.id])).rows[0].total), 0);
+    assert.equal(Number((await database.query<{ total: number }>('SELECT COUNT(*)::integer AS total FROM project_members WHERE project_id = $1', [disposableProject.id])).rows[0].total), 0);
+    for (const table of ['task_assignees', 'checklist_items', 'task_comments']) {
+      assert.equal(Number((await database.query<{ total: number }>(`SELECT COUNT(*)::integer AS total FROM ${table} WHERE task_id IN ($1, $2)`, [disposableTask.id, disposableSubtask.id])).rows[0].total), 0);
+    }
+    assert.equal(Number((await database.query<{ total: number }>('SELECT COUNT(*)::integer AS total FROM recurrence_rules WHERE source_task_id = $1', [disposableTask.id])).rows[0].total), 0);
+    const projectSnapshot = await database.query<{ original_project_id: string; original_client_id: string; deleted_by: string; snapshot: any }>(
+      'SELECT original_project_id, original_client_id, deleted_by, snapshot FROM deleted_project_snapshots WHERE id = $1',
+      [projectDeletion.snapshotId]
+    );
+    assert.equal(projectSnapshot.rows[0].original_project_id, disposableProject.id);
+    assert.equal(projectSnapshot.rows[0].original_client_id, client.id);
+    assert.equal(projectSnapshot.rows[0].deleted_by, ids.admin);
+    assert.equal(projectSnapshot.rows[0].snapshot.project.name, disposableProject.name);
+    assert.equal(projectSnapshot.rows[0].snapshot.tasks.length, 2);
 
     const adminProjectsResponse = await request('/api/projects?operationalView=admin', adminToken, 'GET');
     assert.equal(adminProjectsResponse.status, 200);
@@ -425,6 +652,9 @@ test('rotas aplicam a matriz operacional de RBAC e preservam status em uso', asy
     const createProductResponse = await request('/api/products', adminToken, 'POST', { name: 'Produto de teste', color: '#38BDF8' });
     assert.equal(createProductResponse.status, 201);
     const createdProduct = (await createProductResponse.json() as any).product;
+    const linkNewProductResponse = await request(`/api/clients/${client.id}`, adminToken, 'PUT', { product_ids: [createdProduct.id] });
+    assert.equal(linkNewProductResponse.status, 200);
+    assert.deepEqual((await linkNewProductResponse.json() as any).client.products.map((product: any) => product.id), [createdProduct.id]);
     const updateProductResponse = await request(`/api/products/${createdProduct.id}`, superAdminToken, 'PUT', { name: 'Produto atualizado', color: '#A78BFA' });
     assert.equal(updateProductResponse.status, 200);
     assert.equal((await updateProductResponse.json() as any).product.color, '#A78BFA');
@@ -448,6 +678,9 @@ test('rotas aplicam a matriz operacional de RBAC e preservam status em uso', asy
     const removeProductResponse = await request(`/api/products/${createdProduct.id}`, adminToken, 'DELETE');
     assert.equal(removeProductResponse.status, 200);
     assert.equal((await removeProductResponse.json() as any).deactivated, true);
+    const clientWithInactiveProduct = await clientRepository.findById(client.id);
+    assert.equal(clientWithInactiveProduct?.products[0].id, createdProduct.id);
+    assert.equal(clientWithInactiveProduct?.products[0].active, false);
     const reactivateProductResponse = await request(`/api/products/${createdProduct.id}`, adminToken, 'PUT', { active: true });
     assert.equal(reactivateProductResponse.status, 200);
     assert.equal((await reactivateProductResponse.json() as any).product.active, true);

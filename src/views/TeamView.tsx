@@ -13,6 +13,7 @@ interface TeamViewProps {
   completedTasks: Task[];
   projects: Project[];
   onSelectTask: (task: Task) => void;
+  onSelectProject: (project: Project) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
   onUpdateTask: (task: Task) => void;
   currentUser: User;
@@ -27,6 +28,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
   completedTasks,
   projects,
   onSelectTask,
+  onSelectProject,
   onToggleComplete,
   onUpdateTask,
   currentUser,
@@ -184,6 +186,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
                   key={task.id}
                   task={task}
                   onSelectTask={onSelectTask}
+                  onSelectProject={onSelectProject}
                     onToggleComplete={onToggleComplete}
                   onUpdateTask={onUpdateTask}
                   projects={projects}
@@ -194,6 +197,7 @@ export const TeamView: React.FC<TeamViewProps> = ({
           <CompletedTasksSection
             tasks={userCompletedTasks}
             onSelectTask={onSelectTask}
+            onSelectProject={onSelectProject}
             onToggleComplete={onToggleComplete}
             onUpdateTask={onUpdateTask}
             projects={projects}

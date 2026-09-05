@@ -10,6 +10,7 @@ import { taskRouter } from './routes/taskRoutes.js';
 import { routineRouter } from './routes/routineRoutes.js';
 import { projectStatusRouter } from './routes/projectStatusRoutes.js';
 import { productRouter } from './routes/productRoutes.js';
+import { notificationRouter } from './routes/notificationRoutes.js';
 
 export async function createApiApp(): Promise<Express> {
   const app = express();
@@ -36,6 +37,7 @@ export async function createApiApp(): Promise<Express> {
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/tasks', taskRouter);
   app.use('/api/routines', routineRouter);
+  app.use('/api/notifications', notificationRouter);
 
   return app;
 }

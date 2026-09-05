@@ -1,9 +1,15 @@
 import { Router, Response } from 'express';
-import { clientRepository, projectRepository, userRepository, ClientStatus } from '../db.js';
+import { clientRepository, productRepository, projectRepository, userRepository, ClientStatus } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 import { isUuid } from '../validation.js';
 
 export const clientRouter = Router();
+
+function parseProductIds(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some(id => typeof id !== 'string' || !id.trim())) return null;
+  const ids = value.map(id => (id as string).trim());
+  return new Set(ids).size === ids.length ? ids : null;
+}
 
 function encodedStoragePath(path: string): string {
   return path.split('/').map(encodeURIComponent).join('/');
@@ -96,10 +102,18 @@ clientRouter.get('/:id', authenticateToken, async (req: AuthRequest, res: Respon
 // POST /api/clients - Cadastrar novo cliente
 clientRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
-    const { name, company_name, contact_name, email, phone, status, lead_manager_id, notes, monthly_services, logo } = req.body;
+    const { name, company_name, contact_name, email, phone, status, lead_manager_id, notes, product_ids, logo } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'O nome do cliente é obrigatório.' });
+    }
+    const productIds = parseProductIds(product_ids ?? []);
+    if (!productIds) {
+      return res.status(400).json({ error: 'Os serviços contratados contêm Produtos inválidos ou repetidos.' });
+    }
+    const products = await productRepository.findAll(true);
+    if (productIds.some(id => !products.some(product => product.id === id && product.active))) {
+      return res.status(400).json({ error: 'Selecione somente Produtos ativos e existentes.' });
     }
 
     const chosenLeadManagerId = lead_manager_id || req.user?.id;
@@ -129,8 +143,8 @@ clientRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']),
       status: (status as ClientStatus) || 'ACTIVE',
       lead_manager_id: chosenLeadManagerId,
       notes: notes || '',
-      monthly_services: Array.isArray(monthly_services) ? monthly_services : []
-    });
+      monthly_services: []
+    }, productIds);
 
     return res.status(201).json({
       message: 'Cliente cadastrado com sucesso.',
@@ -145,7 +159,7 @@ clientRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']),
 // PUT /api/clients/:id - Editar cliente
 clientRouter.put('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
-    const { name, company_name, contact_name, email, phone, lead_manager_id, notes, monthly_services, logo } = req.body;
+    const { name, company_name, contact_name, email, phone, lead_manager_id, notes, product_ids, logo } = req.body;
     const clientId = req.params.id;
 
     if (!isUuid(clientId)) {
@@ -155,6 +169,17 @@ clientRouter.put('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']
     const existing = await clientRepository.findById(clientId, req.user);
     if (!existing) {
       return res.status(404).json({ error: 'Cliente não encontrado.' });
+    }
+    const productIds = product_ids === undefined ? undefined : parseProductIds(product_ids);
+    if (product_ids !== undefined && !productIds) {
+      return res.status(400).json({ error: 'Os serviços contratados contêm Produtos inválidos ou repetidos.' });
+    }
+    if (productIds) {
+      const products = await productRepository.findAll(true);
+      const previouslyLinked = new Set(existing.products.map(product => product.id));
+      if (productIds.some(id => !products.some(product => product.id === id && (product.active || previouslyLinked.has(id))))) {
+        return res.status(400).json({ error: 'Um dos Produtos selecionados não existe ou está inativo.' });
+      }
     }
 
     if (lead_manager_id) {
@@ -175,10 +200,9 @@ clientRouter.put('/:id', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']
     if (phone !== undefined) updates.phone = phone.trim();
     if (lead_manager_id !== undefined) updates.lead_manager_id = lead_manager_id;
     if (notes !== undefined) updates.notes = notes;
-    if (monthly_services !== undefined) updates.monthly_services = monthly_services;
     if (logo !== undefined) updates.logo = logo;
 
-    const updated = await clientRepository.update(clientId, updates);
+    const updated = await clientRepository.update(clientId, updates, productIds);
 
     return res.json({
       message: 'Cliente atualizado com sucesso.',

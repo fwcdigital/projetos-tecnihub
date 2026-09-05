@@ -37,8 +37,17 @@ export interface DbClient {
   lead_manager_id?: string | null;
   notes: string;
   monthly_services: string[];
+  products: DbClientProduct[];
   created_at: string;
   updated_at: string;
+}
+
+export interface DbClientProduct {
+  id: string;
+  name: string;
+  color: string;
+  position: number;
+  active: boolean;
 }
 
 export interface ClientDeletionDependencies {
@@ -75,9 +84,29 @@ export interface DbProject {
   due_date?: string | null;
   progress: number;
   is_recurring: boolean;
+  account_status?: 'ACTIVE' | 'INACTIVE';
+  creation_request_id?: string | null;
   created_by?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ProjectDeletionDependencies {
+  tasks: number;
+  projectMembers: number;
+  projectResources: number;
+  taskAssignees: number;
+  taskComments: number;
+  checklistItems: number;
+  recurrenceRules: number;
+}
+
+export interface ProjectPermanentDeletionResult {
+  deleted: boolean;
+  snapshotId?: string;
+  clientId?: string;
+  dependencies: ProjectDeletionDependencies;
+  storagePaths: string[];
 }
 
 export interface DbProjectMember {
@@ -135,7 +164,11 @@ export interface DbTaskComment {
   task_id: string;
   user_id: string;
   content: string;
+  parent_comment_id?: string | null;
   created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
 }
 
 export interface DbProjectResource {
@@ -183,9 +216,41 @@ function normalizeClient(row: any): DbClient {
   return {
     ...row,
     monthly_services: Array.isArray(row.monthly_services) ? row.monthly_services : [],
+    products: Array.isArray(row.products) ? row.products.map((product: any) => ({
+      id: product.id,
+      name: product.name,
+      color: product.color,
+      position: Number(product.position),
+      active: Boolean(product.active)
+    })) : [],
     created_at: toIsoString(row.created_at),
     updated_at: toIsoString(row.updated_at)
   } as DbClient;
+}
+
+async function enrichClients(rows: any[]): Promise<DbClient[]> {
+  if (!rows.length) return [];
+  const result = await getPool().query(
+    `SELECT client_product.client_id, product.id, product.name, product.color, product.position, product.active
+     FROM client_products client_product
+     INNER JOIN products product ON product.id = client_product.product_id
+     WHERE client_product.client_id = ANY($1::uuid[])
+     ORDER BY product.position, product.name`,
+    [rows.map(row => row.id)]
+  );
+  const productsByClient = new Map<string, DbClientProduct[]>();
+  for (const product of result.rows) {
+    const products = productsByClient.get(product.client_id) || [];
+    products.push({
+      id: product.id,
+      name: product.name,
+      color: product.color,
+      position: Number(product.position),
+      active: Boolean(product.active)
+    });
+    productsByClient.set(product.client_id, products);
+  }
+  return rows.map(row => normalizeClient({ ...row, products: productsByClient.get(row.id) || [] }));
 }
 
 function normalizeProject(row: any): DbProject {
@@ -237,6 +302,32 @@ export interface DbProductStatus {
   position: number;
   active: boolean;
   is_completed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbNotification {
+  id: string;
+  user_id: string;
+  type: 'MENTION' | 'COMMENT' | string;
+  actor_user_id?: string | null;
+  project_id?: string | null;
+  task_id?: string | null;
+  comment_id?: string | null;
+  title: string;
+  message: string;
+  created_at: string;
+  read_at?: string | null;
+}
+
+export interface DbProductTaskTemplateItem {
+  id: string;
+  template_id: string;
+  product_id: string;
+  title: string;
+  status_id?: string | null;
+  priority: TaskPriority;
+  position: number;
   created_at: string;
   updated_at: string;
 }
@@ -501,7 +592,7 @@ export const clientRepository = {
        ORDER BY c.created_at DESC`,
       values
     );
-    return result.rows.map(normalizeClient);
+    return enrichClients(result.rows);
   },
 
   findById: async (id: string, user?: AuthScope): Promise<DbClient | null> => {
@@ -525,42 +616,63 @@ export const clientRepository = {
        WHERE ${where.join(' AND ')}`,
       values
     );
-    return result.rowCount ? normalizeClient(result.rows[0]) : null;
+    if (!result.rowCount) return null;
+    return (await enrichClients(result.rows))[0] || null;
   },
 
-  create: async (data: Omit<DbClient, 'id' | 'created_at' | 'updated_at'>): Promise<DbClient> => {
-    const result = await getPool().query(
-      `INSERT INTO clients (
-        name, company_name, logo, contact_name, email, phone, status,
-        lead_manager_id, notes, monthly_services
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[])
-      RETURNING *`,
-      [
-        data.name, data.company_name, data.logo, data.contact_name, data.email,
-        data.phone, data.status, data.lead_manager_id || null, data.notes,
-        data.monthly_services || []
-      ]
-    );
-    return normalizeClient(result.rows[0]);
+  create: async (data: Omit<DbClient, 'id' | 'created_at' | 'updated_at' | 'products'>, productIds: string[] = []): Promise<DbClient> => {
+    const id = await withTransaction(async client => {
+      const result = await client.query(
+        `INSERT INTO clients (
+          name, company_name, logo, contact_name, email, phone, status,
+          lead_manager_id, notes, monthly_services
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[])
+        RETURNING id`,
+        [
+          data.name, data.company_name, data.logo, data.contact_name, data.email,
+          data.phone, data.status, data.lead_manager_id || null, data.notes,
+          data.monthly_services || []
+        ]
+      );
+      for (const productId of productIds) {
+        await client.query('INSERT INTO client_products (client_id, product_id) VALUES ($1, $2)', [result.rows[0].id, productId]);
+      }
+      return result.rows[0].id as string;
+    });
+    return (await clientRepository.findById(id))!;
   },
 
-  update: async (id: string, updates: Partial<Omit<DbClient, 'id' | 'created_at' | 'updated_at'>>): Promise<DbClient | null> => {
+  update: async (id: string, updates: Partial<Omit<DbClient, 'id' | 'created_at' | 'updated_at' | 'products'>>, productIds?: string[]): Promise<DbClient | null> => {
     const columnMap: Record<string, string> = {
       name: 'name', company_name: 'company_name', logo: 'logo', contact_name: 'contact_name',
       email: 'email', phone: 'phone', status: 'status', lead_manager_id: 'lead_manager_id',
       notes: 'notes', monthly_services: 'monthly_services'
     };
     const entries = Object.entries(updates).filter(([key, value]) => key in columnMap && value !== undefined);
-    if (entries.length === 0) return clientRepository.findById(id);
-
-    const values = entries.map(([, value]) => value);
-    const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
-    values.push(id);
-    const result = await getPool().query(
-      `UPDATE clients SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING *`,
-      values
-    );
-    return result.rowCount ? clientRepository.findById(id) : null;
+    const updated = await withTransaction(async client => {
+      let exists = true;
+      if (entries.length) {
+        const values = entries.map(([, value]) => value);
+        const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
+        values.push(id);
+        const result = await client.query(
+          `UPDATE clients SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING id`,
+          values
+        );
+        exists = Boolean(result.rowCount);
+      } else {
+        exists = Boolean((await client.query('SELECT 1 FROM clients WHERE id = $1', [id])).rowCount);
+      }
+      if (!exists) return false;
+      if (productIds !== undefined) {
+        await client.query('DELETE FROM client_products WHERE client_id = $1', [id]);
+        for (const productId of productIds) {
+          await client.query('INSERT INTO client_products (client_id, product_id) VALUES ($1, $2)', [id, productId]);
+        }
+      }
+      return true;
+    });
+    return updated ? clientRepository.findById(id) : null;
   },
 
   setStatus: async (id: string, status: Extract<ClientStatus, 'ACTIVE' | 'INACTIVE'>): Promise<DbClient | null> => (
@@ -780,13 +892,18 @@ function normalizeProductStatus(row: any): DbProductStatus {
 }
 
 export const productRepository = {
-  findAll: async (includeInactive = false): Promise<Array<DbProduct & { projectsCount: number; statusesCount: number }>> => {
+  findAll: async (includeInactive = false): Promise<Array<DbProduct & { projectsCount: number; clientsCount: number; statusesCount: number; templateTasksCount: number }>> => {
     const result = await getPool().query(
       `SELECT product.*,
               COUNT(DISTINCT project.id)::integer AS projects_count,
-              COUNT(DISTINCT product_status.id)::integer AS statuses_count
+              COUNT(DISTINCT client_product.client_id)::integer AS clients_count,
+              COUNT(DISTINCT product_status.id)::integer AS statuses_count,
+              (SELECT COUNT(*)::integer FROM product_task_template_items item
+               INNER JOIN product_task_templates template ON template.id = item.template_id
+               WHERE template.product_id = product.id) AS template_tasks_count
        FROM products product
        LEFT JOIN projects project ON project.product_id = product.id
+       LEFT JOIN client_products client_product ON client_product.product_id = product.id
        LEFT JOIN product_statuses product_status ON product_status.product_id = product.id
        ${includeInactive ? '' : 'WHERE product.active = TRUE'}
        GROUP BY product.id
@@ -795,17 +912,24 @@ export const productRepository = {
     return result.rows.map(row => ({
       ...normalizeProduct(row),
       projectsCount: Number(row.projects_count),
-      statusesCount: Number(row.statuses_count)
+      clientsCount: Number(row.clients_count),
+      statusesCount: Number(row.statuses_count),
+      templateTasksCount: Number(row.template_tasks_count)
     }));
   },
 
-  findById: async (id: string): Promise<(DbProduct & { projectsCount: number; statusesCount: number }) | null> => {
+  findById: async (id: string): Promise<(DbProduct & { projectsCount: number; clientsCount: number; statusesCount: number; templateTasksCount: number }) | null> => {
     const result = await getPool().query(
       `SELECT product.*,
               COUNT(DISTINCT project.id)::integer AS projects_count,
-              COUNT(DISTINCT product_status.id)::integer AS statuses_count
+              COUNT(DISTINCT client_product.client_id)::integer AS clients_count,
+              COUNT(DISTINCT product_status.id)::integer AS statuses_count,
+              (SELECT COUNT(*)::integer FROM product_task_template_items item
+               INNER JOIN product_task_templates template ON template.id = item.template_id
+               WHERE template.product_id = product.id) AS template_tasks_count
        FROM products product
        LEFT JOIN projects project ON project.product_id = product.id
+       LEFT JOIN client_products client_product ON client_product.product_id = product.id
        LEFT JOIN product_statuses product_status ON product_status.product_id = product.id
        WHERE product.id = $1
        GROUP BY product.id`,
@@ -815,18 +939,23 @@ export const productRepository = {
     return {
       ...normalizeProduct(result.rows[0]),
       projectsCount: Number(result.rows[0].projects_count),
-      statusesCount: Number(result.rows[0].statuses_count)
+      clientsCount: Number(result.rows[0].clients_count),
+      statusesCount: Number(result.rows[0].statuses_count),
+      templateTasksCount: Number(result.rows[0].template_tasks_count)
     };
   },
 
   create: async (data: Pick<DbProduct, 'id' | 'name' | 'color'> & Partial<Pick<DbProduct, 'active'>>): Promise<DbProduct> => {
-    const result = await getPool().query(
-      `INSERT INTO products (id, name, color, position, active)
-       VALUES ($1, $2, $3, COALESCE((SELECT MAX(position) + 1 FROM products), 0), $4)
-       RETURNING *`,
-      [data.id, data.name, data.color, data.active ?? true]
-    );
-    return normalizeProduct(result.rows[0]);
+    return withTransaction(async client => {
+      const result = await client.query(
+        `INSERT INTO products (id, name, color, position, active)
+         VALUES ($1, $2, $3, COALESCE((SELECT MAX(position) + 1 FROM products), 0), $4)
+         RETURNING *`,
+        [data.id, data.name, data.color, data.active ?? true]
+      );
+      await client.query('INSERT INTO product_task_templates (product_id) VALUES ($1)', [data.id]);
+      return normalizeProduct(result.rows[0]);
+    });
   },
 
   update: async (id: string, updates: Partial<Pick<DbProduct, 'name' | 'color' | 'active' | 'position'>>): Promise<DbProduct | null> => {
@@ -951,12 +1080,16 @@ export const productStatusRepository = {
 export const projectRepository = {
   findAll: async (
     user?: AuthScope,
-    filter?: { status?: ProjectStatus; clientId?: string; type?: ProjectType; search?: string; assigneeId?: string }
+    filter?: { status?: ProjectStatus; clientId?: string; type?: ProjectType; search?: string; assigneeId?: string; accountStatus?: 'ACTIVE' | 'INACTIVE' | 'ALL' }
   ): Promise<any[]> => {
     const where: string[] = [];
     const values: unknown[] = [];
     addRestrictedProjectAccess(where, values, user);
     addOperationalProjectScope(where, values, filter?.assigneeId);
+    if (filter?.accountStatus !== 'ALL') {
+      values.push(filter?.accountStatus || 'ACTIVE');
+      where.push(`p.account_status = $${values.length}`);
+    }
 
     if (filter?.status) {
       values.push(filter.status);
@@ -1034,33 +1167,65 @@ export const projectRepository = {
 
   create: async (
     data: Omit<DbProject, 'id' | 'created_at' | 'updated_at'>,
-    teamUserIds: string[] = []
+    teamUserIds: string[] = [],
+    options: { applyTaskTemplate?: boolean; creationRequestId?: string } = {}
   ): Promise<any> => {
     const projectId = await withTransaction(async client => {
       const productId = data.product_id || legacyProjectTypeToProductId(data.project_type);
+      const initialStatus = await client.query<{ id: string }>(
+        'SELECT id FROM product_statuses WHERE product_id = $1 AND active = TRUE ORDER BY position, name LIMIT 1',
+        [productId]
+      );
+      const defaultTaskStatusId = initialStatus.rows[0]?.id;
       let productStatusId = data.product_status_id;
       if (!productStatusId) {
-        const initialStatus = await client.query<{ id: string }>(
-          'SELECT id FROM product_statuses WHERE product_id = $1 AND active = TRUE ORDER BY position, name LIMIT 1',
-          [productId]
-        );
-        productStatusId = initialStatus.rows[0]?.id;
+        productStatusId = defaultTaskStatusId;
       }
-      if (!productStatusId) throw new Error('Produto sem status ativo para criação do projeto.');
+      if (!productStatusId || !defaultTaskStatusId) throw new Error('Produto sem status ativo para criação do projeto.');
       const projectResult = await client.query<{ id: string }>(
         `INSERT INTO projects (
           name, description, client_id, project_type, product_id, product_status_id, manager_id, status, priority,
-          start_date, due_date, progress, is_recurring, created_by, briefing
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          start_date, due_date, progress, is_recurring, created_by, briefing, creation_request_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         ON CONFLICT (creation_request_id) WHERE creation_request_id IS NOT NULL DO NOTHING
          RETURNING id`,
         [
           data.name, data.description, data.client_id, data.project_type, productId, productStatusId, data.manager_id,
           data.status || 'PLANNING', data.priority, data.start_date || null, data.due_date || null,
-          data.progress, data.is_recurring, data.created_by || null, data.briefing || {}
+          data.progress, data.is_recurring, data.created_by || null, data.briefing || {}, options.creationRequestId || null
         ]
       );
+      if (!projectResult.rowCount && options.creationRequestId) {
+        const existing = await client.query<{ id: string }>('SELECT id FROM projects WHERE creation_request_id = $1', [options.creationRequestId]);
+        if (existing.rowCount) return existing.rows[0].id;
+        throw new Error('Falha ao localizar o projeto da requisição idempotente.');
+      }
       const id = projectResult.rows[0].id;
       await replaceProjectMembers(client, id, data.manager_id, teamUserIds);
+      if (options.applyTaskTemplate) {
+        const templateTasks = await client.query<{ id: string }>(
+          `INSERT INTO tasks (
+             project_id, title, description, responsible_user_id, status, priority,
+             start_date, due_date, completed_at, created_by
+           )
+           SELECT $1, item.title, '', $2,
+                  COALESCE(active_configured_status.id, $3), item.priority,
+                  $4, COALESCE($5::date, $4::date, CURRENT_DATE), NULL, $6
+           FROM product_task_templates template
+           INNER JOIN product_task_template_items item ON item.template_id = template.id
+           LEFT JOIN product_statuses active_configured_status
+             ON active_configured_status.id = item.status_id
+            AND active_configured_status.product_id = template.product_id
+            AND active_configured_status.active = TRUE
+           WHERE template.product_id = $7
+           ORDER BY item.position
+           RETURNING id`,
+          [id, data.manager_id, defaultTaskStatusId, data.start_date || null, data.due_date || null, data.created_by || data.manager_id, productId]
+        );
+        for (const task of templateTasks.rows) {
+          await replaceTaskAssignees(client, task.id, [data.manager_id]);
+        }
+      }
       return id;
     });
     return projectRepository.findById(projectId);
@@ -1158,6 +1323,164 @@ export const projectRepository = {
       return true;
     });
     return updated ? projectRepository.findById(id) : null;
+  },
+
+  setAccountStatus: async (id: string, status: 'ACTIVE' | 'INACTIVE'): Promise<any | null> => {
+    const result = await getPool().query(
+      'UPDATE projects SET account_status = $1 WHERE id = $2 RETURNING id',
+      [status, id]
+    );
+    return result.rowCount ? projectRepository.findById(id) : null;
+  },
+
+  deletePermanent: async (id: string, deletedBy: string): Promise<ProjectPermanentDeletionResult> => (
+    withTransaction(async transaction => {
+      const projectResult = await transaction.query('SELECT * FROM projects WHERE id = $1 FOR UPDATE', [id]);
+      const emptyDependencies: ProjectDeletionDependencies = {
+        tasks: 0, projectMembers: 0, projectResources: 0, taskAssignees: 0,
+        taskComments: 0, checklistItems: 0, recurrenceRules: 0
+      };
+      if (!projectResult.rowCount) return { deleted: false, dependencies: emptyDependencies, storagePaths: [] };
+
+      const project = projectResult.rows[0];
+      const projectMembers = await transaction.query('SELECT * FROM project_members WHERE project_id = $1 ORDER BY created_at', [id]);
+      const projectResources = await transaction.query('SELECT * FROM project_resources WHERE project_id = $1 ORDER BY created_at', [id]);
+      const tasks = await transaction.query('SELECT * FROM tasks WHERE project_id = $1 ORDER BY created_at', [id]);
+      const taskAssignees = await transaction.query(
+        'SELECT assignee.* FROM task_assignees assignee INNER JOIN tasks task ON task.id = assignee.task_id WHERE task.project_id = $1 ORDER BY assignee.created_at', [id]
+      );
+      const checklistItems = await transaction.query(
+        'SELECT checklist.* FROM checklist_items checklist INNER JOIN tasks task ON task.id = checklist.task_id WHERE task.project_id = $1 ORDER BY checklist.created_at', [id]
+      );
+      const taskComments = await transaction.query(
+        'SELECT comment_item.* FROM task_comments comment_item INNER JOIN tasks task ON task.id = comment_item.task_id WHERE task.project_id = $1 ORDER BY comment_item.created_at', [id]
+      );
+      const recurrenceRules = await transaction.query(
+        'SELECT recurrence.* FROM recurrence_rules recurrence INNER JOIN tasks task ON task.id = recurrence.source_task_id WHERE task.project_id = $1 ORDER BY recurrence.created_at', [id]
+      );
+
+      const dependencies: ProjectDeletionDependencies = {
+        tasks: tasks.rows.length,
+        projectMembers: projectMembers.rows.length,
+        projectResources: projectResources.rows.length,
+        taskAssignees: taskAssignees.rows.length,
+        taskComments: taskComments.rows.length,
+        checklistItems: checklistItems.rows.length,
+        recurrenceRules: recurrenceRules.rows.length
+      };
+      const snapshot = {
+        project,
+        projectMembers: projectMembers.rows,
+        projectResources: projectResources.rows,
+        tasks: tasks.rows,
+        taskAssignees: taskAssignees.rows,
+        checklistItems: checklistItems.rows,
+        taskComments: taskComments.rows,
+        recurrenceRules: recurrenceRules.rows
+      };
+      const snapshotResult = await transaction.query<{ id: string }>(
+        `INSERT INTO deleted_project_snapshots
+           (original_project_id, original_client_id, project_name, deleted_by, snapshot)
+         VALUES ($1, $2, $3, $4, $5::jsonb)
+         RETURNING id`,
+        [id, project.client_id, project.name, deletedBy, JSON.stringify(snapshot)]
+      );
+
+      // As FKs de composição removem somente a árvore pertencente ao projeto. O cliente não é removido.
+      const deletedProject = await transaction.query('DELETE FROM projects WHERE id = $1', [id]);
+      if (!deletedProject.rowCount) throw new Error('Falha ao excluir o projeto dentro da transação.');
+
+      return {
+        deleted: true,
+        snapshotId: snapshotResult.rows[0].id,
+        clientId: project.client_id,
+        dependencies,
+        storagePaths: projectResources.rows.map(resource => resource.storage_path).filter((path): path is string => Boolean(path))
+      };
+    })
+  )
+};
+
+function normalizeProductTaskTemplateItem(row: any): DbProductTaskTemplateItem {
+  return {
+    ...row,
+    position: Number(row.position),
+    created_at: toIsoString(row.created_at),
+    updated_at: toIsoString(row.updated_at)
+  } as DbProductTaskTemplateItem;
+}
+
+export const productTaskTemplateRepository = {
+  findAll: async (productId: string): Promise<DbProductTaskTemplateItem[]> => {
+    const result = await getPool().query(
+      `SELECT item.*, template.product_id
+       FROM product_task_template_items item
+       INNER JOIN product_task_templates template ON template.id = item.template_id
+       WHERE template.product_id = $1
+       ORDER BY item.position, item.created_at`,
+      [productId]
+    );
+    return result.rows.map(normalizeProductTaskTemplateItem);
+  },
+
+  create: async (productId: string, data: Pick<DbProductTaskTemplateItem, 'title' | 'priority'> & { status_id?: string | null }): Promise<DbProductTaskTemplateItem> => {
+    const result = await getPool().query(
+      `INSERT INTO product_task_template_items (template_id, title, status_id, priority, position)
+       SELECT template.id, $2, $3, $4,
+              COALESCE((SELECT MAX(existing.position) + 1 FROM product_task_template_items existing WHERE existing.template_id = template.id), 0)
+       FROM product_task_templates template
+       WHERE template.product_id = $1
+       RETURNING *`,
+      [productId, data.title, data.status_id || null, data.priority]
+    );
+    if (!result.rowCount) throw new Error('Modelo de tarefas do produto não encontrado.');
+    return normalizeProductTaskTemplateItem({ ...result.rows[0], product_id: productId });
+  },
+
+  update: async (productId: string, id: string, updates: Partial<Pick<DbProductTaskTemplateItem, 'title' | 'status_id' | 'priority'>>): Promise<DbProductTaskTemplateItem | null> => {
+    const columnMap: Record<string, string> = { title: 'title', status_id: 'status_id', priority: 'priority' };
+    const entries = Object.entries(updates).filter(([key, value]) => key in columnMap && value !== undefined);
+    if (!entries.length) return (await productTaskTemplateRepository.findAll(productId)).find(item => item.id === id) || null;
+    const values = entries.map(([, value]) => value);
+    const assignments = entries.map(([key], index) => `${columnMap[key]} = $${index + 1}`);
+    values.push(id, productId);
+    const result = await getPool().query(
+      `UPDATE product_task_template_items item SET ${assignments.join(', ')}
+       FROM product_task_templates template
+       WHERE item.template_id = template.id AND item.id = $${values.length - 1} AND template.product_id = $${values.length}
+       RETURNING item.*`,
+      values
+    );
+    return result.rowCount ? normalizeProductTaskTemplateItem({ ...result.rows[0], product_id: productId }) : null;
+  },
+
+  reorder: async (productId: string, ids: string[]): Promise<void> => {
+    await withTransaction(async client => {
+      // Evita colisões temporárias da restrição UNIQUE durante a troca de posições.
+      await client.query(
+        `UPDATE product_task_template_items item SET position = position + 100000
+         FROM product_task_templates template
+         WHERE item.template_id = template.id AND template.product_id = $1`,
+        [productId]
+      );
+      for (const [position, id] of ids.entries()) {
+        await client.query(
+          `UPDATE product_task_template_items item SET position = $1
+           FROM product_task_templates template
+           WHERE item.template_id = template.id AND item.id = $2 AND template.product_id = $3`,
+          [position, id, productId]
+        );
+      }
+    });
+  },
+
+  delete: async (productId: string, id: string): Promise<boolean> => {
+    const result = await getPool().query(
+      `DELETE FROM product_task_template_items item USING product_task_templates template
+       WHERE item.template_id = template.id AND item.id = $1 AND template.product_id = $2`,
+      [id, productId]
+    );
+    return Boolean(result.rowCount);
   }
 };
 
@@ -1314,6 +1637,16 @@ async function enrichTasks(rows: any[], assigneeId?: string): Promise<any[]> {
      ORDER BY comment.created_at DESC`,
     [allTaskIds]
   );
+  const commentIds = commentsResult.rows.map(row => row.id);
+  const mentionsResult = commentIds.length ? await getPool().query(
+    `SELECT mention.comment_id, mention.mentioned_user_id, mention.start_offset, mention.end_offset,
+            mentioned.name AS mentioned_user_name
+     FROM comment_mentions mention
+     INNER JOIN users mentioned ON mentioned.id = mention.mentioned_user_id
+     WHERE mention.comment_id = ANY($1::uuid[])
+     ORDER BY mention.comment_id, mention.start_offset`,
+    [commentIds]
+  ) : { rows: [] as any[] };
   const checklistByTask = new Map<string, any[]>();
   for (const row of checklistResult.rows) {
     const items = checklistByTask.get(row.task_id) || [];
@@ -1321,6 +1654,17 @@ async function enrichTasks(rows: any[], assigneeId?: string): Promise<any[]> {
     checklistByTask.set(row.task_id, items);
   }
   const commentsByTask = new Map<string, any[]>();
+  const mentionsByComment = new Map<string, any[]>();
+  for (const row of mentionsResult.rows) {
+    const mentions = mentionsByComment.get(row.comment_id) || [];
+    mentions.push({
+      userId: row.mentioned_user_id,
+      userName: row.mentioned_user_name,
+      start: Number(row.start_offset),
+      end: Number(row.end_offset)
+    });
+    mentionsByComment.set(row.comment_id, mentions);
+  }
   for (const row of commentsResult.rows) {
     const comments = commentsByTask.get(row.task_id) || [];
     comments.push({
@@ -1328,8 +1672,13 @@ async function enrichTasks(rows: any[], assigneeId?: string): Promise<any[]> {
       userId: row.user_id,
       userName: row.user_name,
       userAvatar: row.user_avatar || '',
-      content: row.content,
-      createdAt: toIsoString(row.created_at)
+      content: row.deleted_at ? '' : row.content,
+      parentCommentId: row.parent_comment_id || undefined,
+      mentions: mentionsByComment.get(row.id) || [],
+      createdAt: toIsoString(row.created_at),
+      updatedAt: toIsoString(row.updated_at || row.created_at),
+      deletedAt: row.deleted_at ? toIsoString(row.deleted_at) : undefined,
+      deletedBy: row.deleted_by || undefined
     });
     commentsByTask.set(row.task_id, comments);
   }
@@ -1337,6 +1686,7 @@ async function enrichTasks(rows: any[], assigneeId?: string): Promise<any[]> {
   for (const subtask of subtasks) {
     subtask.checklist = checklistByTask.get(subtask.id) || [];
     subtask.comments = commentsByTask.get(subtask.id) || [];
+    subtask.commentCount = subtask.comments.filter((comment: any) => !comment.deletedAt).length;
     const siblings = subtasksByParent.get(subtask.parentTaskId) || [];
     siblings.push(subtask);
     subtasksByParent.set(subtask.parentTaskId, siblings);
@@ -1345,6 +1695,7 @@ async function enrichTasks(rows: any[], assigneeId?: string): Promise<any[]> {
     ...task,
     checklist: checklistByTask.get(task.id) || [],
     comments: commentsByTask.get(task.id) || [],
+    commentCount: (commentsByTask.get(task.id) || []).filter((comment: any) => !comment.deletedAt).length,
     subtasks: subtasksByParent.get(task.id) || []
   }));
 }
@@ -1450,7 +1801,293 @@ export const taskCommentRepository = {
        RETURNING *`,
       [taskId, userId, content]
     );
-    return { ...result.rows[0], created_at: toIsoString(result.rows[0].created_at) } as DbTaskComment;
+    return { ...result.rows[0], created_at: toIsoString(result.rows[0].created_at), updated_at: toIsoString(result.rows[0].updated_at) } as DbTaskComment;
+  },
+
+  findMentionableUsers: async (taskId: string): Promise<SafeUser[]> => {
+    const result = await getPool().query(
+      `SELECT DISTINCT u.id, u.name, u.email, u.avatar, u.role, u.job_title, u.status, u.created_at, u.updated_at
+       FROM tasks task
+       INNER JOIN projects project ON project.id = task.project_id
+       INNER JOIN users u ON u.status = 'ACTIVE'
+       WHERE task.id = $1
+         AND (
+           u.role IN ('SUPER_ADMIN', 'ADMIN')
+           OR u.id = project.manager_id
+           OR EXISTS (SELECT 1 FROM project_members member WHERE member.project_id = project.id AND member.user_id = u.id)
+           OR EXISTS (SELECT 1 FROM task_assignees assignee WHERE assignee.task_id = task.id AND assignee.user_id = u.id)
+         )
+       ORDER BY u.name`,
+      [taskId]
+    );
+    return result.rows.map(row => ({ ...row, created_at: toIsoString(row.created_at), updated_at: toIsoString(row.updated_at) }));
+  },
+
+  createWithNotifications: async (taskId: string, actorUserId: string, content: string, requestedMentionUserIds: string[], requestedParentCommentId?: string | null): Promise<DbTaskComment> => withTransaction(async client => {
+    const contextResult = await client.query(
+      `SELECT task.id, task.title, task.project_id, project.name AS project_name,
+              client.name AS client_name, actor.name AS actor_name
+       FROM tasks task
+       INNER JOIN projects project ON project.id = task.project_id
+       INNER JOIN clients client ON client.id = project.client_id
+       INNER JOIN users actor ON actor.id = $2
+       WHERE task.id = $1
+       FOR UPDATE OF task`,
+      [taskId, actorUserId]
+    );
+    if (!contextResult.rows[0]) throw new Error('TASK_NOT_FOUND');
+    const context = contextResult.rows[0];
+    let parentCommentId: string | null = null;
+    let parentAuthorId: string | null = null;
+    if (requestedParentCommentId) {
+      const parentResult = await client.query(
+        `SELECT id, task_id, user_id, parent_comment_id, deleted_at
+         FROM task_comments WHERE id = $1 FOR UPDATE`,
+        [requestedParentCommentId]
+      );
+      const requestedParent = parentResult.rows[0];
+      if (!requestedParent || requestedParent.task_id !== taskId || requestedParent.deleted_at) throw new Error('INVALID_PARENT_COMMENT');
+      parentCommentId = requestedParent.parent_comment_id || requestedParent.id;
+      const rootResult = requestedParent.parent_comment_id
+        ? await client.query('SELECT id, user_id, deleted_at FROM task_comments WHERE id = $1', [parentCommentId])
+        : parentResult;
+      const rootComment = rootResult.rows[0];
+      if (!rootComment || rootComment.deleted_at) throw new Error('INVALID_PARENT_COMMENT');
+      parentAuthorId = rootComment.user_id;
+    }
+
+    const uniqueMentionIds = Array.from(new Set(requestedMentionUserIds)).filter(id => id !== actorUserId);
+    const allowedResult = uniqueMentionIds.length ? await client.query(
+      `SELECT DISTINCT u.id, u.name
+       FROM users u
+       INNER JOIN projects project ON project.id = $2
+       WHERE u.id = ANY($1::uuid[]) AND u.status = 'ACTIVE'
+         AND (
+           u.role IN ('SUPER_ADMIN', 'ADMIN')
+           OR u.id = project.manager_id
+           OR EXISTS (SELECT 1 FROM project_members member WHERE member.project_id = project.id AND member.user_id = u.id)
+           OR EXISTS (SELECT 1 FROM task_assignees assignee WHERE assignee.task_id = $3 AND assignee.user_id = u.id)
+         )`,
+      [uniqueMentionIds, context.project_id, taskId]
+    ) : { rows: [] as Array<{ id: string; name: string }> };
+    if (allowedResult.rows.length !== uniqueMentionIds.length) throw new Error('INVALID_MENTION');
+
+    const mentionOffsets = allowedResult.rows.map(user => {
+      const token = `@${user.name}`;
+      const start = content.toLocaleLowerCase('pt-BR').indexOf(token.toLocaleLowerCase('pt-BR'));
+      if (start < 0) throw new Error('INVALID_MENTION');
+      return { ...user, start, end: start + token.length };
+    });
+
+    const commentResult = await client.query(
+      `INSERT INTO task_comments (task_id, user_id, content, parent_comment_id) VALUES ($1, $2, $3, $4) RETURNING *`,
+      [taskId, actorUserId, content, parentCommentId]
+    );
+    const comment = commentResult.rows[0];
+
+    for (const mention of mentionOffsets) {
+      await client.query(
+        `INSERT INTO comment_mentions (comment_id, mentioned_user_id, mentioned_by_user_id, start_offset, end_offset)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [comment.id, mention.id, actorUserId, mention.start, mention.end]
+      );
+    }
+
+    const assigneesResult = await client.query<{ user_id: string }>(
+      'SELECT user_id FROM task_assignees WHERE task_id = $1 AND user_id <> $2',
+      [taskId, actorUserId]
+    );
+    const recipients = new Map<string, 'MENTION' | 'COMMENT'>();
+    for (const assignee of assigneesResult.rows) recipients.set(assignee.user_id, 'COMMENT');
+    if (parentAuthorId && parentAuthorId !== actorUserId) recipients.set(parentAuthorId, 'COMMENT');
+    for (const mention of mentionOffsets) recipients.set(mention.id, 'MENTION');
+
+    for (const [recipientId, type] of recipients) {
+      const isReplyRecipient = Boolean(parentCommentId && recipientId === parentAuthorId);
+      const title = type === 'MENTION' ? 'Mencionaram você em um comentário' : isReplyRecipient ? `${context.actor_name} respondeu ao seu comentário` : 'Novo comentário em uma tarefa';
+      const message = type === 'MENTION'
+        ? `${context.actor_name} mencionou você na tarefa "${context.title}"`
+        : isReplyRecipient
+          ? `${context.actor_name} respondeu ao seu comentário na tarefa "${context.title}"`
+          : `${context.actor_name} comentou na tarefa "${context.title}"`;
+      await client.query(
+        `INSERT INTO notifications (user_id, type, actor_user_id, project_id, task_id, comment_id, title, message)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (user_id, comment_id) DO UPDATE SET
+           type = CASE WHEN EXCLUDED.type = 'MENTION' THEN 'MENTION' ELSE notifications.type END,
+           title = CASE WHEN EXCLUDED.type = 'MENTION' THEN EXCLUDED.title ELSE notifications.title END,
+           message = CASE WHEN EXCLUDED.type = 'MENTION' THEN EXCLUDED.message ELSE notifications.message END`,
+        [recipientId, type, actorUserId, context.project_id, taskId, comment.id, title, message]
+      );
+    }
+
+    return { ...comment, created_at: toIsoString(comment.created_at), updated_at: toIsoString(comment.updated_at) } as DbTaskComment;
+  }),
+
+  updateWithMentions: async (taskId: string, commentId: string, actor: AuthScope, content: string, requestedMentionUserIds: string[]): Promise<DbTaskComment> => withTransaction(async client => {
+    const commentResult = await client.query(
+      `SELECT comment.*, task.project_id, task.title AS task_title, project.name AS project_name,
+              account.name AS client_name, actor.name AS actor_name,
+              EXISTS (SELECT 1 FROM task_comments reply WHERE reply.parent_comment_id = comment.id) AS has_replies
+       FROM task_comments comment
+       INNER JOIN tasks task ON task.id = comment.task_id
+       INNER JOIN projects project ON project.id = task.project_id
+       INNER JOIN clients account ON account.id = project.client_id
+       INNER JOIN users actor ON actor.id = $3
+       WHERE comment.id = $1 AND comment.task_id = $2
+       FOR UPDATE OF comment`,
+      [commentId, taskId, actor.id]
+    );
+    const comment = commentResult.rows[0];
+    if (!comment) throw new Error('COMMENT_NOT_FOUND');
+    if (comment.deleted_at) throw new Error('COMMENT_DELETED');
+    if (comment.user_id !== actor.id) throw new Error('COMMENT_EDIT_FORBIDDEN');
+    if (comment.has_replies || new Date(comment.created_at).getTime() + 5 * 60_000 < Date.now()) throw new Error('COMMENT_EDIT_WINDOW_EXPIRED');
+
+    const uniqueMentionIds = Array.from(new Set(requestedMentionUserIds)).filter(id => id !== actor.id);
+    const allowedResult = uniqueMentionIds.length ? await client.query(
+      `SELECT DISTINCT u.id, u.name
+       FROM users u
+       WHERE u.id = ANY($1::uuid[]) AND u.status = 'ACTIVE'
+         AND (
+           u.role IN ('SUPER_ADMIN', 'ADMIN')
+           OR u.id = (SELECT manager_id FROM projects WHERE id = $2)
+           OR EXISTS (SELECT 1 FROM project_members member WHERE member.project_id = $2 AND member.user_id = u.id)
+           OR EXISTS (SELECT 1 FROM task_assignees assignee WHERE assignee.task_id = $3 AND assignee.user_id = u.id)
+         )`,
+      [uniqueMentionIds, comment.project_id, taskId]
+    ) : { rows: [] as Array<{ id: string; name: string }> };
+    if (allowedResult.rows.length !== uniqueMentionIds.length) throw new Error('INVALID_MENTION');
+    const mentionOffsets = allowedResult.rows.map(user => {
+      const token = `@${user.name}`;
+      const start = content.toLocaleLowerCase('pt-BR').indexOf(token.toLocaleLowerCase('pt-BR'));
+      if (start < 0) throw new Error('INVALID_MENTION');
+      return { ...user, start, end: start + token.length };
+    });
+
+    await client.query('UPDATE task_comments SET content = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [content, commentId]);
+    await client.query('DELETE FROM comment_mentions WHERE comment_id = $1', [commentId]);
+    for (const mention of mentionOffsets) {
+      await client.query(
+        `INSERT INTO comment_mentions (comment_id, mentioned_user_id, mentioned_by_user_id, start_offset, end_offset)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [commentId, mention.id, actor.id, mention.start, mention.end]
+      );
+      await client.query(
+        `INSERT INTO notifications (user_id, type, actor_user_id, project_id, task_id, comment_id, title, message)
+         VALUES ($1, 'MENTION', $2, $3, $4, $5, 'Mencionaram você em um comentário', $6)
+         ON CONFLICT (user_id, comment_id) DO UPDATE SET type = 'MENTION', title = EXCLUDED.title, message = EXCLUDED.message`,
+        [mention.id, actor.id, comment.project_id, taskId, commentId, `${comment.actor_name} mencionou você na tarefa "${comment.task_title}"`]
+      );
+    }
+    const updated = await client.query('SELECT * FROM task_comments WHERE id = $1', [commentId]);
+    return {
+      ...updated.rows[0],
+      created_at: toIsoString(updated.rows[0].created_at),
+      updated_at: toIsoString(updated.rows[0].updated_at)
+    } as DbTaskComment;
+  }),
+
+  softDelete: async (taskId: string, commentId: string, actor: AuthScope): Promise<DbTaskComment> => withTransaction(async client => {
+    const result = await client.query(
+      `SELECT comment.*,
+              EXISTS (SELECT 1 FROM task_comments reply WHERE reply.parent_comment_id = comment.id) AS has_replies
+       FROM task_comments comment
+       WHERE comment.id = $1 AND comment.task_id = $2
+       FOR UPDATE OF comment`,
+      [commentId, taskId]
+    );
+    const comment = result.rows[0];
+    if (!comment) throw new Error('COMMENT_NOT_FOUND');
+    if (comment.deleted_at) return { ...comment, created_at: toIsoString(comment.created_at), updated_at: toIsoString(comment.updated_at) } as DbTaskComment;
+    const administrator = actor.role === 'SUPER_ADMIN' || actor.role === 'ADMIN';
+    if (!administrator) {
+      if (comment.user_id !== actor.id) throw new Error('COMMENT_DELETE_FORBIDDEN');
+      if (comment.has_replies || new Date(comment.created_at).getTime() + 5 * 60_000 < Date.now()) throw new Error('COMMENT_DELETE_WINDOW_EXPIRED');
+    }
+    const deleted = await client.query(
+      `UPDATE task_comments SET deleted_at = CURRENT_TIMESTAMP, deleted_by = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2 RETURNING *`,
+      [actor.id, commentId]
+    );
+    return {
+      ...deleted.rows[0],
+      created_at: toIsoString(deleted.rows[0].created_at),
+      updated_at: toIsoString(deleted.rows[0].updated_at),
+      deleted_at: toIsoString(deleted.rows[0].deleted_at)
+    } as DbTaskComment;
+  })
+};
+
+function normalizeNotification(row: any): any {
+  return {
+    id: row.id,
+    type: row.type,
+    actorUserId: row.actor_user_id || undefined,
+    actorName: row.actor_name || undefined,
+    actorAvatar: row.actor_avatar || '',
+    projectId: row.project_id || undefined,
+    projectName: row.project_name || undefined,
+    taskId: row.task_id || undefined,
+    taskTitle: row.task_title || undefined,
+    commentId: row.comment_id || undefined,
+    title: row.title,
+    message: row.message,
+    createdAt: toIsoString(row.created_at),
+    readAt: row.read_at ? toIsoString(row.read_at) : null,
+    read: Boolean(row.read_at)
+  };
+}
+
+export const notificationRepository = {
+  findForUser: async (user: AuthScope, filter: 'all' | 'unread' | 'mentions' = 'all', limit = 100): Promise<any[]> => {
+    const values: unknown[] = [user.id, Math.min(Math.max(limit, 1), 200)];
+    const where = ['notification.user_id = $1'];
+    if (filter === 'unread') where.push('notification.read_at IS NULL');
+    if (filter === 'mentions') where.push("notification.type = 'MENTION'");
+    if (user.role !== 'SUPER_ADMIN' && user.role !== 'ADMIN') {
+      values.push(user.id);
+      where.push(`(
+        notification.project_id IS NULL OR EXISTS (
+          SELECT 1 FROM projects access_project
+          WHERE access_project.id = notification.project_id
+            AND (access_project.manager_id = $3 OR EXISTS (
+              SELECT 1 FROM project_members access_member
+              WHERE access_member.project_id = access_project.id AND access_member.user_id = $3
+            ))
+        )
+      )`);
+    }
+    const result = await getPool().query(
+      `SELECT notification.*, actor.name AS actor_name, actor.avatar AS actor_avatar,
+              project.name AS project_name, task.title AS task_title
+       FROM notifications notification
+       LEFT JOIN users actor ON actor.id = notification.actor_user_id
+       LEFT JOIN projects project ON project.id = notification.project_id
+       LEFT JOIN tasks task ON task.id = notification.task_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY notification.created_at DESC
+       LIMIT $2`,
+      values
+    );
+    return result.rows.map(normalizeNotification);
+  },
+
+  markRead: async (id: string, userId: string): Promise<any | null> => {
+    const result = await getPool().query(
+      `UPDATE notifications SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
+       WHERE id = $1 AND user_id = $2 RETURNING *`,
+      [id, userId]
+    );
+    return result.rows[0] ? normalizeNotification(result.rows[0]) : null;
+  },
+
+  markAllRead: async (userId: string): Promise<number> => {
+    const result = await getPool().query(
+      'UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND read_at IS NULL',
+      [userId]
+    );
+    return result.rowCount || 0;
   }
 };
 

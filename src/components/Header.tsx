@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { 
   Plus, 
   Search, 
@@ -15,6 +15,7 @@ import { OperationalViewMode, User, Notification } from '../types';
 import { UserRoleSwitcher } from './UserRoleSwitcher';
 import { NavView } from './Sidebar';
 import { isAdministrator } from '../permissions';
+import { NotificationItem } from './NotificationItem';
 
 interface HeaderProps {
   currentView: NavView;
@@ -30,7 +31,13 @@ interface HeaderProps {
   overdueCount: number;
   onOpenMobileMenu?: () => void;
   notifications?: Notification[];
-  onMarkAllNotificationsRead?: () => void;
+  unreadNotificationsCount: number;
+  onMarkAllNotificationsRead?: () => Promise<void> | void;
+  onMarkNotificationRead?: (notification: Notification) => void;
+  onOpenNotification?: (notification: Notification) => void;
+  onOpenNotificationCenter?: () => void;
+  onOpenProfile: () => void;
+  onNotificationsOpen?: () => void;
   operationalView: OperationalViewMode;
   onOperationalViewChange: (mode: OperationalViewMode) => void;
 }
@@ -49,12 +56,41 @@ export const Header: React.FC<HeaderProps> = ({
   overdueCount,
   onOpenMobileMenu,
   notifications = [],
+  unreadNotificationsCount,
   onMarkAllNotificationsRead,
+  onMarkNotificationRead,
+  onOpenNotification,
+  onOpenNotificationCenter,
+  onOpenProfile,
+  onNotificationsOpen,
   operationalView,
   onOperationalViewChange
 }) => {
-  const [isNewMenuOpen, setIsNewMenuOpen] = useState(false);
-  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [openMenu, setOpenMenu] = useState<'notifications' | 'profile' | 'new' | null>(null);
+  const notificationMenuRef = useRef<HTMLDivElement>(null);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+  const newMenuRef = useRef<HTMLDivElement>(null);
+  const isNewMenuOpen = openMenu === 'new';
+  const isNotificationsOpen = openMenu === 'notifications';
+
+  useEffect(() => {
+    if (!openMenu) return;
+    const closeOnOutside = (event: PointerEvent) => {
+      const activeRef = openMenu === 'notifications' ? notificationMenuRef : openMenu === 'profile' ? profileMenuRef : newMenuRef;
+      if (!activeRef.current?.contains(event.target as Node)) setOpenMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpenMenu(null);
+    };
+    document.addEventListener('pointerdown', closeOnOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [openMenu]);
+
+  useEffect(() => setOpenMenu(null), [currentView]);
 
   const getViewTitle = () => {
     switch (currentView) {
@@ -80,6 +116,8 @@ export const Header: React.FC<HeaderProps> = ({
         return 'Calendário';
       case 'RELATORIOS':
         return 'Relatórios';
+      case 'NOTIFICACOES':
+        return 'Notificações';
       case 'CONFIGURACOES':
         return 'Configurações';
       case 'PERFIL':
@@ -89,7 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
     }
   };
 
-  const unreadCount = notifications.filter(n => !n.read).length || (overdueCount > 0 ? 1 : 0);
+  const unreadCount = unreadNotificationsCount;
 
   return (
     <header className="h-14 border-b border-[#1e1e24] bg-[#0c0c0f]/95 backdrop-blur-md px-3 sm:px-4 flex items-center justify-between sticky top-0 z-30 select-none">
@@ -150,74 +188,55 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         {/* Role Switcher (Hidden or Compact on small screens) */}
-        <div className="hidden sm:block">
-          <UserRoleSwitcher currentUser={currentUser} />
+        <div ref={profileMenuRef} className="hidden sm:block">
+          <UserRoleSwitcher currentUser={currentUser} isOpen={openMenu === 'profile'} onOpenChange={open => setOpenMenu(open ? 'profile' : null)} onOpenProfile={onOpenProfile} />
         </div>
 
         {/* Notifications Icon with Badge */}
-        <div className="relative">
+        <div ref={notificationMenuRef} className="relative">
           <button
-            onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
+            onClick={() => {
+              const opening = !isNotificationsOpen;
+              setOpenMenu(opening ? 'notifications' : null);
+              if (opening) onNotificationsOpen?.();
+            }}
             className="p-2 rounded-lg bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors relative min-w-[38px] min-h-[38px] flex items-center justify-center"
             title="Notificações e Alertas"
             aria-label="Abrir notificações"
           >
             <Bell size={16} />
             {unreadCount > 0 && (
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+              <span className="absolute -right-1 -top-1 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white">{unreadCount > 99 ? '99+' : unreadCount}</span>
             )}
           </button>
 
           {/* Notifications Dropdown */}
           {isNotificationsOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setIsNotificationsOpen(false)} />
-              <div className="absolute right-0 mt-2 w-72 sm:w-80 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-3 z-50 animate-in fade-in zoom-in-95">
+              <div className="absolute right-0 z-50 mt-2 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-zinc-800 bg-[#121215] p-3 shadow-2xl animate-in fade-in zoom-in-95">
                 <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
-                  <span className="text-xs font-bold text-zinc-200">Alertas Operacionais</span>
-                  {onMarkAllNotificationsRead && (
+                  <span className="text-xs font-bold text-zinc-200">Notificações</span>
+                  {onMarkAllNotificationsRead && unreadCount > 0 && (
                     <button 
-                      onClick={() => {
-                        onMarkAllNotificationsRead();
-                        setIsNotificationsOpen(false);
-                      }}
+                      onClick={() => void onMarkAllNotificationsRead()}
                       className="text-[10px] text-emerald-400 hover:underline"
                     >
-                      Marcar lidas
+                      Marcar todas como lidas
                     </button>
                   )}
                 </div>
-                <div className="py-2 space-y-2 text-xs max-h-72 overflow-y-auto">
-                  {overdueCount > 0 && (
-                    <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-200">
-                      <p className="font-semibold text-rose-300 text-[11px] uppercase tracking-wider">
-                        Urgente: Tarefa Atrasada
-                      </p>
-                      <p className="text-zinc-300 text-xs mt-0.5">
-                        Existem {overdueCount} tarefas com prazo vencido que exigem atenção.
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="p-2 rounded-lg bg-zinc-800/60 border border-zinc-700/60 text-zinc-300">
-                    <p className="font-semibold text-amber-300 text-[11px] uppercase tracking-wider">
-                      Vence Hoje às 11:00
-                    </p>
-                    <p className="text-zinc-200 text-xs mt-0.5">
-                      "Finalizar página Home" da Indústria Atlas precisa de revisão.
-                    </p>
-                    <span className="text-[10px] text-zinc-400 mt-1 block">Hoje • Responsável: Gabriel</span>
-                  </div>
+                <div className="max-h-80 space-y-2 overflow-y-auto py-2">
+                  {notifications.slice(0, 8).map(notification => <NotificationItem key={notification.id} notification={notification} compact onClick={() => { setOpenMenu(null); onOpenNotification?.(notification); }} onMarkRead={() => onMarkNotificationRead?.(notification)} />)}
+                  {notifications.length === 0 && <div className="px-3 py-8 text-center text-xs text-zinc-500">Nenhuma notificação por enquanto.</div>}
                 </div>
+                {onOpenNotificationCenter && <button type="button" onClick={() => { setOpenMenu(null); onOpenNotificationCenter(); }} className="w-full border-t border-zinc-800 pt-2 text-center text-[11px] font-semibold text-sky-400 hover:text-sky-300">Ver todas as notificações</button>}
               </div>
-            </>
           )}
         </div>
 
         {/* Global Primary Action Button: + NOVO */}
-        <div className="relative">
+        <div ref={newMenuRef} className="relative">
           <button
-            onClick={() => setIsNewMenuOpen(!isNewMenuOpen)}
+            onClick={() => setOpenMenu(isNewMenuOpen ? null : 'new')}
             className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs shadow-sm transition-all min-h-[38px]"
             title="Criar novo item"
           >
@@ -227,15 +246,13 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* New Item Dropdown Menu */}
           {isNewMenuOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setIsNewMenuOpen(false)} />
               <div className="absolute right-0 mt-2 w-56 rounded-xl bg-[#141418] border border-zinc-800 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95">
                 <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
                   Criar no Sistema
                 </div>
                 <button
                   onClick={() => {
-                    setIsNewMenuOpen(false);
+                    setOpenMenu(null);
                     onOpenNewTask();
                   }}
                   className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold text-zinc-200 hover:text-white hover:bg-zinc-800 transition-colors text-left min-h-[44px]"
@@ -250,7 +267,7 @@ export const Header: React.FC<HeaderProps> = ({
                 {onOpenNewProject && (
                   <button
                     onClick={() => {
-                      setIsNewMenuOpen(false);
+                      setOpenMenu(null);
                       onOpenNewProject();
                     }}
                     className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold text-zinc-200 hover:text-white hover:bg-zinc-800 transition-colors text-left min-h-[44px]"
@@ -266,7 +283,7 @@ export const Header: React.FC<HeaderProps> = ({
                 {onOpenNewClient && (
                   <button
                     onClick={() => {
-                      setIsNewMenuOpen(false);
+                      setOpenMenu(null);
                       onOpenNewClient();
                     }}
                     className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold text-zinc-200 hover:text-white hover:bg-zinc-800 transition-colors text-left min-h-[44px]"
@@ -282,7 +299,7 @@ export const Header: React.FC<HeaderProps> = ({
                 {onOpenNewUser && (
                   <button
                     onClick={() => {
-                      setIsNewMenuOpen(false);
+                      setOpenMenu(null);
                       onOpenNewUser();
                     }}
                     className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold text-zinc-200 hover:text-white hover:bg-zinc-800 transition-colors text-left min-h-[44px]"
@@ -295,7 +312,6 @@ export const Header: React.FC<HeaderProps> = ({
                   </button>
                 )}
               </div>
-            </>
           )}
         </div>
       </div>

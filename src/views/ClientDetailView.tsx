@@ -19,6 +19,8 @@ import { PriorityPicker } from '../components/PriorityPicker';
 import { StatusPicker } from '../components/StatusPicker';
 import { getWorkflowStatusOptions } from '../components/visualTokens';
 import { canManageProjectOperations, isAdministrator } from '../permissions';
+import { isContainerNavigationClick, isContainerNavigationKey } from '../components/containerNavigation';
+import { ProductBadge } from '../components/ProductBadge';
 
 interface ClientDetailViewProps {
   client: Client;
@@ -186,11 +188,8 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
         <div className="pt-2 border-t border-zinc-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[11px] font-semibold text-zinc-400">Serviços Contratados:</span>
-            {client.monthlyServices.map((serv, idx) => (
-              <span key={idx} className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[11px] border border-zinc-700">
-                {serv}
-              </span>
-            ))}
+            {(client.products || []).map(product => <ProductBadge key={product.id} label={`${product.name}${product.active ? '' : ' · inativo'}`} color={product.color} />)}
+            {!client.products?.length && <span className="text-[11px] text-zinc-600">Nenhum Produto vinculado</span>}
           </div>
 
           {client.notes && (
@@ -240,8 +239,12 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
           {clientProjects.map((p) => (
             <div
               key={p.id}
-              onClick={() => onSelectProject(p)}
-              className="p-3.5 rounded-xl bg-[#121216] border border-zinc-800 hover:border-zinc-700 cursor-pointer transition-all hover:bg-[#16161c] space-y-2"
+              role="link"
+              tabIndex={0}
+              aria-label={`Abrir projeto ${p.name}`}
+              onClick={event => { if (isContainerNavigationClick(event)) onSelectProject(p); }}
+              onKeyDown={event => { if (isContainerNavigationKey(event)) { event.preventDefault(); onSelectProject(p); } }}
+              className="p-3.5 rounded-xl bg-[#121216] border border-zinc-800 hover:border-zinc-700 cursor-pointer transition-all hover:bg-[#16161c] space-y-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60"
             >
               <div className="flex items-center justify-between">
                 <span className="font-bold text-sm text-zinc-100">{p.name}</span>
@@ -271,6 +274,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
               key={task.id}
               task={task}
               onSelectTask={onSelectTask}
+              onSelectProject={onSelectProject}
                     onToggleComplete={onToggleComplete}
               onUpdateTask={onUpdateTask}
               projects={projects}
@@ -279,6 +283,7 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
           <CompletedTasksSection
             tasks={clientCompletedTasks}
             onSelectTask={onSelectTask}
+            onSelectProject={onSelectProject}
             onToggleComplete={onToggleComplete}
             onUpdateTask={onUpdateTask}
             projects={projects}

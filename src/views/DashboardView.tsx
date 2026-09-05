@@ -29,6 +29,7 @@ interface DashboardViewProps {
   clients: Client[];
   users: User[];
   onSelectTask: (task: Task) => void;
+  onSelectProject: (project: Project) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
   onUpdateTask: (task: Task) => void;
   onNavigate: (view: any) => void;
@@ -47,6 +48,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   clients,
   users,
   onSelectTask,
+  onSelectProject,
   onToggleComplete,
   onUpdateTask,
   onNavigate,
@@ -92,7 +94,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const upcomingTasks = tasks.filter(t => t.dueDate > todayStr && t.dueDate <= dateKey(addDays(7)) && !t.statusCompleted);
   // Active Projects
   const activeProjects = projects.filter(project => !isProjectCompleted(project));
-  const renderGroupedRows = (items: Task[]) => <GroupedSections groups={groupTasks(items, grouping, projects)} renderItem={task => <TaskRow key={task.id} task={task} onSelectTask={onSelectTask} onToggleComplete={onToggleComplete} onUpdateTask={onUpdateTask} projects={projects} layout="STACKED" />} />;
+  const renderGroupedRows = (items: Task[]) => <GroupedSections groups={groupTasks(items, grouping, projects)} renderItem={task => <TaskRow key={task.id} task={task} onSelectTask={onSelectTask} onSelectProject={onSelectProject} onToggleComplete={onToggleComplete} onUpdateTask={onUpdateTask} projects={projects} layout="STACKED" />} />;
   const handleToggleLoadMore = () => {
     if (!showMoreUpcoming) {
       setIsLoadingMore(true);
@@ -351,6 +353,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <CompletedTasksSection
             tasks={completedTasks}
             onSelectTask={onSelectTask}
+            onSelectProject={onSelectProject}
             onToggleComplete={onToggleComplete}
             onUpdateTask={onUpdateTask}
             projects={projects}

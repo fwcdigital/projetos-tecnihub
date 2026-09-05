@@ -29,8 +29,9 @@ import {
 import { Pencil, Save } from 'lucide-react';
 import { UserAvatar } from '../components/UserAvatar';
 import { projectService } from '../services/projectService';
-import { canManageProjectOperations } from '../permissions';
+import { canManageProjectOperations, isAdministrator } from '../permissions';
 import { getWorkflowStatusOptions } from '../components/visualTokens';
+import { ProjectLifecycleActions } from '../components/ProjectLifecycleActions';
 
 interface ProjectDetailViewProps {
   project: Project;
@@ -39,6 +40,7 @@ interface ProjectDetailViewProps {
   completedTasks: Task[];
   onBack: () => void;
   onSelectTask: (task: Task) => void;
+  onSelectProject: (project: Project) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
   onUpdateTask: (task: Task) => void;
   onOpenNewTask: () => void;
@@ -48,6 +50,8 @@ interface ProjectDetailViewProps {
   onProjectRefresh: () => Promise<void>;
   projectStatuses: ProjectStatusDefinition[];
   onUpdateProject: (project: Project, updates: Partial<Project>, teamUserIds?: string[]) => Promise<void>;
+  onSetProjectStatus?: (project: Project, status: 'ACTIVE' | 'INACTIVE') => Promise<void>;
+  onDeleteProject?: (project: Project, confirmationName: string) => Promise<void>;
 }
 
 export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
@@ -57,6 +61,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   completedTasks,
   onBack,
   onSelectTask,
+  onSelectProject,
   onToggleComplete,
   onUpdateTask,
   onOpenNewTask,
@@ -65,7 +70,9 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   onSaveBriefing,
   onProjectRefresh,
   projectStatuses,
-  onUpdateProject
+  onUpdateProject,
+  onSetProjectStatus,
+  onDeleteProject
 }) => {
   const [activeTab, setActiveTab] = useState<'ALL' | 'TODO' | 'PROGRESS' | 'DOCS'>('ALL');
   const [briefing, setBriefing] = useState<Record<string, string>>({});
@@ -105,7 +112,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   return (
     <div className="mx-auto max-w-[1800px] space-y-6 p-4 animate-in fade-in duration-150 sm:p-6">
       {/* Top Back Nav & Quick Actions */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <button
           onClick={onBack}
           className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white transition-colors"
@@ -114,7 +121,8 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
           <span>Voltar para Todos os Projetos</span>
         </button>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+          {isAdministrator(currentUser.role) && onSetProjectStatus && onDeleteProject && <ProjectLifecycleActions project={project} mode="buttons" onSetStatus={onSetProjectStatus} onDelete={onDeleteProject} />}
           {onOpenEditProject && <button onClick={onOpenEditProject} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs font-semibold"><Pencil size={13} />Editar projeto</button>}
           <button onClick={onOpenNewTask} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-zinc-950 hover:bg-zinc-100 text-xs font-bold shadow-sm transition-colors"><Plus size={14} /><span>+ Nova tarefa</span></button>
         </div>
@@ -131,6 +139,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               <ProductBadge label={project.typeName || project.type} color={project.typeColor} />
               <StatusPicker value={project.status} options={getWorkflowStatusOptions(project.workflowStatuses || [], { value: project.status, label: project.statusName, color: project.statusColor })} onChange={canManageProject ? status => void onUpdateProject(project, { status }) : undefined} ariaLabel={`Alterar status de ${project.name}`} />
               <PriorityPicker value={project.priority} onChange={canManageProject ? priority => void onUpdateProject(project, { priority }) : undefined} />
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${project.accountStatus === 'INACTIVE' ? 'border-zinc-700 bg-zinc-800 text-zinc-400' : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400'}`}>{project.accountStatus === 'INACTIVE' ? 'Projeto arquivado' : 'Projeto ativo'}</span>
               {project.isRecurring && (
                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[10px] border border-emerald-500/20 font-medium">
                   <Repeat size={10} />
@@ -243,19 +252,23 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                 key={task.id}
                 task={task}
                 onSelectTask={onSelectTask}
+                onSelectProject={onSelectProject}
                     onToggleComplete={onToggleComplete}
                 onUpdateTask={onUpdateTask}
                 projects={projects}
+                containerNavigationTarget="TASK"
               />
             ))
           )}
           <CompletedTasksSection
             tasks={projectCompletedTasks}
             onSelectTask={onSelectTask}
+            onSelectProject={onSelectProject}
             onToggleComplete={onToggleComplete}
             onUpdateTask={onUpdateTask}
             projects={projects}
             contextKey={project.id}
+            containerNavigationTarget="TASK"
           />
         </div>
       ) : (

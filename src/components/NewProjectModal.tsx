@@ -46,6 +46,8 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [applyTaskTemplate, setApplyTaskTemplate] = useState(true);
+  const [creationRequestId, setCreationRequestId] = useState(() => crypto.randomUUID());
 
   const selectedClient = clients.find(c => c.id === clientId) || clients[0];
   const selectedManager = users.find(u => u.id === managerId) || currentUser;
@@ -62,6 +64,12 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
     const nextStatuses = nextProduct?.statuses || [];
     if (!nextStatuses.some(option => option.id === status)) setStatus(nextStatuses[0]?.id || '');
   }, [activeProducts, clients, currentUser.id, currentUser.role, defaultClientId, isOpen, status, type]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setApplyTaskTemplate(true);
+    setCreationRequestId(crypto.randomUUID());
+  }, [isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,6 +99,8 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
         description: description.trim(),
         tasksCount: 0,
         overdueTasksCount: 0,
+        applyTaskTemplate,
+        creationRequestId,
       }, selectedUserIds);
 
       onClose();
@@ -192,6 +202,13 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({
               </select>
             </div>
           </div>
+
+          {(selectedProduct?.templateTasks?.length || selectedProduct?.templateTasksCount || 0) > 0 && (
+            <label className="flex items-start gap-3 rounded-xl border border-sky-500/20 bg-sky-500/5 p-3">
+              <input type="checkbox" checked={applyTaskTemplate} onChange={event => setApplyTaskTemplate(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-900 text-sky-500 focus:ring-sky-500/30" />
+              <span><span className="block text-xs font-semibold text-sky-200">Criar tarefas usando o modelo deste Produto</span><span className="mt-0.5 block text-[10px] text-zinc-400">Este Produto possui um modelo com {selectedProduct?.templateTasks?.length || selectedProduct?.templateTasksCount || 0} tarefas. As tarefas serão cópias independentes no novo projeto.</span></span>
+            </label>
+          )}
 
           {/* Manager & Status & Priority */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

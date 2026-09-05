@@ -10,16 +10,26 @@ export type NavView =
   | 'RECORRENCIAS'
   | 'CALENDARIO'
   | 'RELATORIOS'
+  | 'NOTIFICACOES'
   | 'CONFIGURACOES'
   | 'PERFIL';
 
 export interface Notification {
   id: string;
+  type: 'MENTION' | 'COMMENT';
   title: string;
   message: string;
-  timestamp: string;
+  createdAt: string;
+  readAt?: string | null;
   read: boolean;
-  type: 'TASK' | 'PROJECT' | 'CLIENT' | 'ALERT';
+  actorUserId?: string;
+  actorName?: string;
+  actorAvatar?: string;
+  projectId?: string;
+  projectName?: string;
+  taskId?: string;
+  taskTitle?: string;
+  commentId?: string;
 }
 
 export type UserRole = 'ADMIN_PRINCIPAL' | 'ADMIN' | 'GESTOR_PROJETO' | 'COLABORADOR';
@@ -66,6 +76,17 @@ export interface ProductDefinition {
   projectsCount: number;
   statusesCount: number;
   statuses?: ProductStatusDefinition[];
+  templateTasksCount?: number;
+  templateTasks?: ProductTaskTemplateItem[];
+}
+
+export interface ProductTaskTemplateItem {
+  id: string;
+  productId: string;
+  title: string;
+  statusId?: string;
+  priority: Priority;
+  position: number;
 }
 
 export interface ProductStatusDefinition {
@@ -155,7 +176,12 @@ export interface TaskComment {
   userName: string;
   userAvatar: string;
   content: string;
+  parentCommentId?: string;
+  mentions?: Array<{ userId: string; userName: string; start: number; end: number }>;
   createdAt: string;
+  updatedAt?: string;
+  deletedAt?: string;
+  deletedBy?: string;
 }
 
 export interface TaskAttachment {
@@ -207,6 +233,7 @@ export interface Task {
   subtasks: Subtask[];
   checklist: ChecklistItem[];
   comments: TaskComment[];
+  commentCount?: number;
   attachments: TaskAttachment[];
   history: TaskHistory[];
   createdBy: string;
@@ -233,6 +260,7 @@ export interface Client {
   accountStatus?: 'ACTIVE' | 'INACTIVE';
   notes: string;
   monthlyServices: string[];
+  products?: Array<Pick<ProductDefinition, 'id' | 'name' | 'color' | 'position' | 'active'>>;
   createdAt: string;
 }
 
@@ -266,11 +294,14 @@ export interface Project {
   typeColor?: string;
   workflowStatuses?: ProductStatusDefinition[];
   isRecurring: boolean;
+  accountStatus?: 'ACTIVE' | 'INACTIVE';
   description: string;
   briefing?: Record<string, string>;
   resources?: ProjectResource[];
   tasksCount: number;
   overdueTasksCount: number;
+  applyTaskTemplate?: boolean;
+  creationRequestId?: string;
 }
 
 export interface ProjectResource {

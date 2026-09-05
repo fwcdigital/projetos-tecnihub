@@ -27,6 +27,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { PriorityBadge } from '../components/PriorityBadge';
 import { GroupHeader, GroupedSections, GroupingSwitcher, groupTasks, usePersistentGrouping } from '../components/GroupingSwitcher';
 import { UserAvatar } from '../components/UserAvatar';
+import { isContainerNavigationClick, isContainerNavigationKey } from '../components/containerNavigation';
 
 interface MyWorkViewProps {
   currentUser: User;
@@ -36,6 +37,7 @@ interface MyWorkViewProps {
   clients: Client[];
   users: User[];
   onSelectTask: (task: Task) => void;
+  onSelectProject: (project: Project) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
   onUpdateTask: (task: Task) => void;
   onOpenNewTask: () => void;
@@ -49,6 +51,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
   clients,
   users,
   onSelectTask,
+  onSelectProject,
   onToggleComplete,
   onUpdateTask,
   onOpenNewTask
@@ -68,6 +71,10 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
   const [todayGrouping, setTodayGrouping] = usePersistentGrouping('tecnihub:grouping:tasks:today', 'date');
   const [tomorrowGrouping, setTomorrowGrouping] = usePersistentGrouping('tecnihub:grouping:tasks:tomorrow', 'date');
   const [upcomingGrouping, setUpcomingGrouping] = usePersistentGrouping('tecnihub:grouping:tasks:upcoming', 'date');
+  const openTaskProject = (task: Task) => {
+    const project = projects.find(item => item.id === task.projectId);
+    if (project) onSelectProject(project);
+  };
 
   const dateKey = (daysAhead: number) => {
     const date = new Date();
@@ -180,7 +187,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
   const tomorrowTasks = filteredTasks.filter(t => t.dueDate === tomorrowStr);
   const nextDaysTasks = filteredTasks.filter(t => t.dueDate > tomorrowStr);
   const groupedTasks = useMemo(() => groupTasks(filteredTasks, grouping, projects), [filteredTasks, grouping, projects]);
-  const renderGroupedRows = (items: Task[], mode: typeof grouping, emptyMessage?: string) => <GroupedSections groups={groupTasks(items, mode, projects)} emptyMessage={emptyMessage} renderItem={task => <TaskRow key={task.id} task={task} onSelectTask={onSelectTask} onToggleComplete={onToggleComplete} onUpdateTask={onUpdateTask} projects={projects} />} />;
+  const renderGroupedRows = (items: Task[], mode: typeof grouping, emptyMessage?: string) => <GroupedSections groups={groupTasks(items, mode, projects)} emptyMessage={emptyMessage} renderItem={task => <TaskRow key={task.id} task={task} onSelectTask={onSelectTask} onSelectProject={onSelectProject} onToggleComplete={onToggleComplete} onUpdateTask={onUpdateTask} projects={projects} />} />;
 
   const clearFilters = () => {
     setSearchTerm('');
@@ -379,7 +386,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
       </div>
 
       {viewMode === 'PROJECTS' && (
-        <GroupedSections<Task> groups={groupedTasks} emptyMessage="Nenhuma tarefa encontrada com os filtros selecionados." renderItem={task => <TaskRow key={task.id} task={task} onSelectTask={onSelectTask} onToggleComplete={onToggleComplete} onUpdateTask={onUpdateTask} projects={projects} />} />
+        <GroupedSections<Task> groups={groupedTasks} emptyMessage="Nenhuma tarefa encontrada com os filtros selecionados." renderItem={task => <TaskRow key={task.id} task={task} onSelectTask={onSelectTask} onSelectProject={onSelectProject} onToggleComplete={onToggleComplete} onUpdateTask={onUpdateTask} projects={projects} />} />
       )}
 
       {/* VIEW MODE 1: CHRONOLOGICAL LIST (The Core ClickUp Experience) */}
@@ -483,30 +490,34 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
               {group.items.map(task => (
                 <tr
                   key={task.id}
-                  onClick={() => onSelectTask(task)}
-                  className="hover:bg-zinc-800/50 cursor-pointer transition-colors"
+                  role="link"
+                  tabIndex={0}
+                  aria-label={`Abrir projeto ${task.projectName}`}
+                  onClick={event => { if (isContainerNavigationClick(event)) openTaskProject(task); }}
+                  onKeyDown={event => { if (isContainerNavigationKey(event)) { event.preventDefault(); openTaskProject(task); } }}
+                  className="cursor-pointer transition-colors hover:bg-zinc-800/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500/60"
                 >
                   <td className="p-3 font-medium text-zinc-100 truncate max-w-[240px]">
-                    {task.title}
+                    <button type="button" onClick={event => { event.stopPropagation(); onSelectTask(task); }} className="max-w-full truncate text-left hover:text-sky-200">{task.title}</button>
                   </td>
-                  <td className="p-3 text-zinc-300">{task.clientName}</td>
-                  <td className="p-3 text-zinc-400">{task.projectName}</td>
-                  <td className="p-3">
+                  <td data-container-navigation="ignore" className="p-3 text-zinc-300">{task.clientName}</td>
+                  <td data-container-navigation="ignore" className="p-3 text-zinc-400">{task.projectName}</td>
+                  <td data-container-navigation="ignore" className="p-3">
                     <div className="flex items-center gap-1.5">
                       <UserAvatar name={task.assigneeName} src={task.assigneeAvatar} className="h-5 w-5" />
                       <span className="text-zinc-200">{task.assigneeName.split(' ')[0]}</span>
                     </div>
                   </td>
-                  <td className="p-3 font-mono text-zinc-300">
+                  <td data-container-navigation="ignore" className="p-3 font-mono text-zinc-300">
                     {task.dueDate.split('-').reverse().slice(0, 2).join('/')} {task.dueTime || ''}
                   </td>
-                  <td className="p-3">
+                  <td data-container-navigation="ignore" className="p-3">
                     <PriorityBadge priority={task.priority} size="sm" />
                   </td>
-                  <td className="p-3">
+                  <td data-container-navigation="ignore" className="p-3">
                     <StatusBadge status={task.status} label={task.statusName} color={task.statusColor} size="sm" />
                   </td>
-                  <td className="p-3 text-zinc-400">
+                  <td data-container-navigation="ignore" className="p-3 text-zinc-400">
                     {task.isRecurring ? 'Sim' : 'Não'}
                   </td>
                 </tr>
@@ -529,15 +540,19 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
                   {group.items.map(task => (
                     <div
                       key={task.id}
-                      onClick={() => onSelectTask(task)}
-                      className="p-3 rounded-lg bg-[#181820] border border-zinc-800 hover:border-zinc-700 cursor-pointer shadow-xs transition-all space-y-2"
+                      role="link"
+                      tabIndex={0}
+                      aria-label={`Abrir projeto ${task.projectName}`}
+                      onClick={event => { if (isContainerNavigationClick(event)) openTaskProject(task); }}
+                      onKeyDown={event => { if (isContainerNavigationKey(event)) { event.preventDefault(); openTaskProject(task); } }}
+                      className="cursor-pointer space-y-2 rounded-lg border border-zinc-800 bg-[#181820] p-3 shadow-xs transition-all hover:border-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60"
                     >
-                      <div className="flex items-center justify-between text-[10px]">
+                      <div data-container-navigation="ignore" className="flex items-center justify-between text-[10px]">
                         <span className="text-zinc-400">{task.clientName}</span>
                         <PriorityBadge priority={task.priority} size="sm" />
                       </div>
-                      <p className="text-xs font-medium text-zinc-100">{task.title}</p>
-                      <div className="flex items-center justify-between pt-1 border-t border-zinc-800/80 text-[10px] text-zinc-400">
+                      <button type="button" onClick={event => { event.stopPropagation(); onSelectTask(task); }} className="w-full text-left text-xs font-medium text-zinc-100 hover:text-sky-200">{task.title}</button>
+                      <div data-container-navigation="ignore" className="flex items-center justify-between pt-1 border-t border-zinc-800/80 text-[10px] text-zinc-400">
                         <span>{task.dueDate.split('-').reverse().slice(0, 2).join('/')}</span>
                         <UserAvatar name={task.assigneeName} src={task.assigneeAvatar} className="h-4 w-4" />
                       </div>
@@ -552,6 +567,7 @@ export const MyWorkView: React.FC<MyWorkViewProps> = ({
       <CompletedTasksSection
         tasks={filteredCompletedTasks}
         onSelectTask={onSelectTask}
+        onSelectProject={onSelectProject}
         onToggleComplete={onToggleComplete}
         onUpdateTask={onUpdateTask}
         projects={projects}

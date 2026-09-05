@@ -18,25 +18,30 @@ import { TaskDateRangePicker } from './TaskDateRangePicker';
 import { TaskActionsMenu } from './TaskActionsMenu';
 import { StatusPicker } from './StatusPicker';
 import { getWorkflowStatusOptions, isTaskCompleted } from './visualTokens';
+import { isContainerNavigationClick, isContainerNavigationKey } from './containerNavigation';
 
 interface TaskRowProps {
   task: Task;
-  onSelectTask: (task: Task) => void;
+  onSelectTask: (task: Task, initialTab?: 'DETAILS' | 'COMMENTS') => void;
+  onSelectProject?: (project: Project) => void;
   onToggleComplete: (taskId: string, e: React.MouseEvent) => void;
   showDate?: boolean;
   onUpdateTask?: (task: Task) => void;
   projects?: Project[];
   layout?: 'DEFAULT' | 'STACKED';
+  containerNavigationTarget?: 'PROJECT' | 'TASK';
 }
 
 export const TaskRow: React.FC<TaskRowProps> = ({
   task,
   onSelectTask,
+  onSelectProject,
   onToggleComplete,
   showDate = true,
   onUpdateTask,
   projects = [],
   layout = 'DEFAULT',
+  containerNavigationTarget = 'PROJECT',
 }) => {
   const [expanded, setExpanded] = useState(false);
   const isCompleted = isTaskCompleted(task);
@@ -77,13 +82,23 @@ export const TaskRow: React.FC<TaskRowProps> = ({
   // Calculate checklist progress
   const totalChecklist = task.checklist.length;
   const completedChecklist = task.checklist.filter(c => c.completed).length;
+  const visibleCommentCount = task.commentCount ?? task.comments.filter(comment => !comment.deletedAt).length;
 
   const isOverdue = task.dueDate < new Date().toISOString().slice(0, 10) && !isCompleted;
   const stacked = layout === 'STACKED';
+  const relatedProject = projects.find(project => project.id === task.projectId);
+  const openRelatedProject = () => {
+    if (relatedProject) onSelectProject?.(relatedProject);
+  };
+  const containerIsNavigable = containerNavigationTarget === 'TASK' || Boolean(relatedProject && onSelectProject);
+  const openContainerTarget = () => {
+    if (containerNavigationTarget === 'TASK') onSelectTask(task, 'DETAILS');
+    else openRelatedProject();
+  };
   const controls = () => <>
     <div className="flex flex-shrink-0 items-center gap-2 text-[11px] text-zinc-500">
       {totalChecklist > 0 && <span className={`flex items-center gap-1 ${completedChecklist === totalChecklist ? 'text-emerald-400' : 'text-zinc-400'}`} title={`Checklist: ${completedChecklist}/${totalChecklist} concluídos`}><CheckSquare size={12} className="flex-shrink-0" /><span>{completedChecklist}/{totalChecklist}</span></span>}
-      {task.comments.length > 0 && <span className="flex items-center gap-1 text-zinc-400" title={`${task.comments.length} comentários`}><MessageSquare size={12} className="flex-shrink-0" /><span>{task.comments.length}</span></span>}
+      {visibleCommentCount > 0 && <button type="button" onClick={event => { event.stopPropagation(); onSelectTask(task, 'COMMENTS'); }} className="flex items-center gap-1 rounded text-zinc-400 transition-colors hover:text-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60" title={`Abrir ${visibleCommentCount} comentários`} aria-label={`Abrir comentários de ${task.title}`}><MessageSquare size={12} className="flex-shrink-0" /><span>{visibleCommentCount}</span></button>}
       {task.attachments.length > 0 && <span className="flex items-center gap-1 text-zinc-400" title={`${task.attachments.length} arquivos`}><Paperclip size={12} className="flex-shrink-0" /><span>{task.attachments.length}</span></span>}
     </div>
     {showDate && <TaskDateRangePicker task={task} onChange={onUpdateTask} />}
@@ -99,7 +114,12 @@ export const TaskRow: React.FC<TaskRowProps> = ({
   return (
     <div>
     <div
-      className={`group relative flex justify-between overflow-visible rounded-lg border px-2.5 py-1.5 transition-all ${stacked ? 'flex-col items-stretch gap-2' : 'flex-col gap-1.5 md:flex-row md:items-center md:gap-2.5'} ${
+      role={containerIsNavigable ? 'link' : undefined}
+      tabIndex={containerIsNavigable ? 0 : undefined}
+      aria-label={containerIsNavigable ? (containerNavigationTarget === 'TASK' ? `Abrir tarefa ${task.title}` : `Abrir projeto ${relatedProject?.name}`) : undefined}
+      onClick={event => { if (isContainerNavigationClick(event)) openContainerTarget(); }}
+      onKeyDown={event => { if (isContainerNavigationKey(event)) { event.preventDefault(); openContainerTarget(); } }}
+      className={`group relative flex justify-between overflow-visible rounded-lg border px-2.5 py-1.5 transition-all ${containerIsNavigable ? 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60' : ''} ${stacked ? 'flex-col items-stretch gap-2' : 'flex-col gap-1.5 md:flex-row md:items-center md:gap-2.5'} ${
         isCompleted 
           ? 'bg-[#101014]/60 border-zinc-800/40 opacity-70 hover:opacity-100' 
           : isOverdue
@@ -138,12 +158,12 @@ export const TaskRow: React.FC<TaskRowProps> = ({
             <TaskContextPicker task={task} projects={projects} mode="CLIENT" onChange={onUpdateTask ? moveToProject : undefined} />
             <TaskContextPicker task={task} projects={projects} mode="PROJECT" onChange={onUpdateTask ? moveToProject : undefined} />
             {task.isRecurring && task.recurrence && <RecurrencePopover task={task} onChange={onUpdateTask} />}
-            {stacked && <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2.5 sm:gap-3">{controls()}</div>}
+            {stacked && <div data-container-navigation="ignore" className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2.5 sm:gap-3">{controls()}</div>}
           </div>
         </div>
       </div>
 
-      {!stacked && <div className="flex min-w-0 flex-shrink-0 items-center justify-between gap-2.5 border-t border-zinc-800/60 pt-2 sm:gap-3 md:justify-end md:border-t-0 md:pt-0">{controls()}</div>}
+      {!stacked && <div data-container-navigation="ignore" className="flex min-w-0 flex-shrink-0 items-center justify-between gap-2.5 border-t border-zinc-800/60 pt-2 sm:gap-3 md:justify-end md:border-t-0 md:pt-0">{controls()}</div>}
     </div>
     {expanded && onUpdateTask && <ExpandableTaskChildren task={task} users={task.availableAssignees || []} onUpdateTask={onUpdateTask} />}
     </div>

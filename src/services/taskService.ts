@@ -1,5 +1,6 @@
 import { api } from './api';
-import { ChecklistItem, OperationalViewMode, Task, TaskStatus } from '../types';
+import { ChecklistItem, OperationalViewMode, Task, TaskStatus, User } from '../types';
+import { formatUserFromBackend } from './userService';
 
 export interface TaskFilter {
   projectId?: string;
@@ -128,9 +129,26 @@ export const taskService = {
     return response.task;
   },
 
-  addComment: async (taskId: string, content: string): Promise<Task> => {
-    const response = await api.post<{ success: boolean; task: Task }>(`/api/tasks/${taskId}/comments`, { content });
+  getMentionableUsers: async (taskId: string): Promise<User[]> => {
+    const response = await api.get<{ success: boolean; users: any[] }>(`/api/tasks/${taskId}/mentionable-users`);
+    return (response.users || []).map(formatUserFromBackend);
+  },
+
+  addComment: async (taskId: string, content: string, mentionUserIds: string[] = [], parentCommentId?: string): Promise<Task> => {
+    const response = await api.post<{ success: boolean; task: Task }>(`/api/tasks/${taskId}/comments`, { content, mentionUserIds, parentCommentId });
     if (!response?.task) throw new Error('Falha ao adicionar comentário');
+    return response.task;
+  },
+
+  updateComment: async (taskId: string, commentId: string, content: string, mentionUserIds: string[] = []): Promise<Task> => {
+    const response = await api.put<{ success: boolean; task: Task }>(`/api/tasks/${taskId}/comments/${commentId}`, { content, mentionUserIds });
+    if (!response?.task) throw new Error('Falha ao editar comentário');
+    return response.task;
+  },
+
+  deleteComment: async (taskId: string, commentId: string): Promise<Task> => {
+    const response = await api.delete<{ success: boolean; task: Task }>(`/api/tasks/${taskId}/comments/${commentId}`);
+    if (!response?.task) throw new Error('Falha ao excluir comentário');
     return response.task;
   },
 

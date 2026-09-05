@@ -33,6 +33,24 @@ function encodedStoragePath(path: string): string {
   return path.split('/').map(encodeURIComponent).join('/');
 }
 
+async function removeStoredProjectFiles(storagePaths: string[]): Promise<string[]> {
+  if (storagePaths.length === 0) return [];
+  const config = storageConfig();
+  if (!config) return storagePaths;
+  const pending: string[] = [];
+  for (const storagePath of storagePaths) {
+    try {
+      const removal = await fetch(`${config.url}/storage/v1/object/${config.bucket}/${encodedStoragePath(storagePath)}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${config.key}`, apikey: config.key }
+      });
+      if (!removal.ok && removal.status !== 404) pending.push(storagePath);
+    } catch {
+      pending.push(storagePath);
+    }
+  }
+  return pending;
+}
+
 async function getInvalidTeamMemberId(teamUserIds: unknown): Promise<string | null> {
   if (teamUserIds === undefined) return null;
   if (!Array.isArray(teamUserIds)) return 'formato-invalido';
@@ -49,15 +67,20 @@ async function getInvalidTeamMemberId(teamUserIds: unknown): Promise<string | nu
 // GET /api/projects - Listar projetos respeitando RBAC
 projectRouter.get('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const { status, clientId, type, search, operationalView } = req.query;
+    const { status, clientId, type, search, operationalView, accountStatus } = req.query;
     if (operationalView && !['admin', 'operator'].includes(String(operationalView))) return res.status(400).json({ error: 'Contexto operacional inválido.' });
     if (operationalView && !isAdministrator(req.user)) return res.status(403).json({ error: 'O contexto operacional é exclusivo para administradores.' });
+    const requestedAccountStatus = typeof accountStatus === 'string' ? accountStatus.toUpperCase() : undefined;
+    if (requestedAccountStatus && !['ACTIVE', 'INACTIVE', 'ALL'].includes(requestedAccountStatus)) {
+      return res.status(400).json({ error: 'Filtro de situação do projeto inválido.' });
+    }
 
     const projects = await projectRepository.findAll(req.user, {
       status: status as ProjectStatus,
       clientId: clientId as string,
       type: type as ProjectType,
       search: search as string,
+      accountStatus: requestedAccountStatus as 'ACTIVE' | 'INACTIVE' | 'ALL' | undefined,
       assigneeId: operationalView === 'operator' ? req.user!.id : undefined
     });
 
@@ -168,6 +191,57 @@ projectRouter.delete('/:projectId/resources/:resourceId', authenticateToken, asy
   }
 });
 
+// PATCH /api/projects/:id/account-status - Arquivar ou reativar preservando toda a árvore do projeto
+projectRouter.patch('/:id/account-status', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), async (req: AuthRequest, res: Response) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Projeto não encontrado.' });
+    const status = String(req.body?.status || '').toUpperCase();
+    if (status !== 'ACTIVE' && status !== 'INACTIVE') {
+      return res.status(400).json({ error: 'Situação deve ser ACTIVE ou INACTIVE.' });
+    }
+    const updated = await projectRepository.setAccountStatus(req.params.id, status);
+    if (!updated) return res.status(404).json({ error: 'Projeto não encontrado.' });
+    return res.json({
+      message: status === 'ACTIVE' ? 'Projeto reativado com sucesso.' : 'Projeto arquivado com sucesso.',
+      project: updated
+    });
+  } catch (error) {
+    console.error('Erro ao alterar situação do projeto:', error);
+    return res.status(500).json({ error: 'Erro ao alterar a situação do projeto.' });
+  }
+});
+
+// DELETE /api/projects/:id/permanent - Snapshot e exclusão transacional da árvore do projeto
+projectRouter.delete('/:id/permanent', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN']), async (req: AuthRequest, res: Response) => {
+  try {
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Projeto não encontrado.' });
+    const existing = await projectRepository.findById(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Projeto não encontrado.' });
+    const confirmationName = String(req.body?.confirmationName || '').trim();
+    if (confirmationName !== existing.name) {
+      return res.status(400).json({ error: 'Digite o nome exato do projeto para confirmar a exclusão definitiva.' });
+    }
+
+    const result = await projectRepository.deletePermanent(req.params.id, req.user!.id);
+    if (!result.deleted) return res.status(404).json({ error: 'Projeto não encontrado.' });
+    const pendingStorageCleanup = await removeStoredProjectFiles(result.storagePaths);
+    if (pendingStorageCleanup.length > 0) {
+      console.warn(`[Projetos] ${pendingStorageCleanup.length} arquivo(s) aguardam limpeza externa após a exclusão de ${req.params.id}.`);
+    }
+    return res.json({
+      message: 'Projeto e todos os dados relacionados foram excluídos definitivamente.',
+      deleted: true,
+      clientId: result.clientId,
+      snapshotId: result.snapshotId,
+      deletedRelations: result.dependencies,
+      pendingStorageCleanup: pendingStorageCleanup.length
+    });
+  } catch (error) {
+    console.error('Erro na exclusão definitiva do projeto:', error);
+    return res.status(500).json({ error: 'Erro ao excluir definitivamente o projeto.' });
+  }
+});
+
 // GET /api/projects/:id - Detalhes do projeto
 projectRouter.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
@@ -204,7 +278,9 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
       progress,
       is_recurring,
       briefing,
-      team_user_ids
+      team_user_ids,
+      apply_task_template,
+      creation_request_id
     } = req.body;
 
     if (!name || !name.trim()) {
@@ -246,6 +322,9 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
     if (priority && !PRIORITIES.includes(priority)) {
       return res.status(400).json({ error: 'Prioridade de projeto inválida.' });
     }
+    if (creation_request_id !== undefined && !isUuid(creation_request_id)) {
+      return res.status(400).json({ error: 'Identificador da criação do projeto inválido.' });
+    }
 
     const invalidTeamMemberId = await getInvalidTeamMemberId(team_user_ids);
     if (invalidTeamMemberId) {
@@ -268,7 +347,10 @@ projectRouter.post('/', authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 
       is_recurring: Boolean(is_recurring),
       briefing: briefing && typeof briefing === 'object' ? briefing : {},
       created_by: req.user?.id
-    }, Array.isArray(team_user_ids) ? team_user_ids : []);
+    }, Array.isArray(team_user_ids) ? team_user_ids : [], {
+      applyTaskTemplate: apply_task_template !== false,
+      creationRequestId: creation_request_id
+    });
 
     return res.status(201).json({
       message: 'Projeto criado com sucesso.',

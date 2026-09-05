@@ -25,6 +25,13 @@ function normalizeClient(c: any): Client {
     accountStatus,
     notes: c.notes || '',
     monthlyServices: c.monthly_services || [],
+    products: Array.isArray(c.products) ? c.products.map((product: any) => ({
+      id: product.id,
+      name: product.name,
+      color: product.color,
+      position: Number(product.position || 0),
+      active: product.active !== false
+    })) : [],
     createdAt: c.created_at || ''
   };
 }
@@ -58,7 +65,7 @@ export const clientService = {
       status: 'ACTIVE',
       lead_manager_id: data.leadManagerId,
       notes: data.notes,
-      monthly_services: data.monthlyServices
+      product_ids: data.products?.map(product => product.id) || []
     };
 
     const res = await api.post<{ client: any }>('/api/clients', payload);
@@ -76,7 +83,7 @@ export const clientService = {
       phone: data.contactPhone,
       lead_manager_id: data.leadManagerId,
       notes: data.notes,
-      monthly_services: data.monthlyServices
+      product_ids: data.products?.map(product => product.id)
     };
 
     const res = await api.put<{ client: any }>(`/api/clients/${id}`, payload);

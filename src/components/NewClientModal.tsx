@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Client, User } from '../types';
-import { X, Building, Phone, Mail, User as UserIcon, Tag, Loader2, AlertCircle } from 'lucide-react';
+import { Client, ProductDefinition, User } from '../types';
+import { X, Building, Phone, Mail, User as UserIcon, Tag, Loader2, AlertCircle, Check, ChevronDown } from 'lucide-react';
+import { ProductBadge } from './ProductBadge';
 
 interface NewClientModalProps {
   isOpen: boolean;
@@ -10,6 +11,7 @@ interface NewClientModalProps {
   onUpdateClient?: (client: Client, updates: Partial<Client>) => Promise<void> | void;
   users: User[];
   currentUser: User;
+  products: ProductDefinition[];
 }
 
 export const NewClientModal: React.FC<NewClientModalProps> = ({
@@ -19,7 +21,8 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
   client,
   onUpdateClient,
   users,
-  currentUser
+  currentUser,
+  products
 }) => {
   const [name, setName] = useState('');
   const [company, setCompany] = useState('');
@@ -27,7 +30,8 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
   const [contactEmail, setContactEmail] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [leadManagerId, setLeadManagerId] = useState(currentUser.id);
-  const [services, setServices] = useState('Google Ads, Meta Ads');
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [servicesOpen, setServicesOpen] = useState(false);
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +45,8 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
     setContactEmail(client?.contactEmail || '');
     setContactPhone(client?.contactPhone || '');
     setLeadManagerId(client?.leadManagerId || currentUser.id);
-    setServices(client?.monthlyServices.join(', ') || '');
+    setSelectedProductIds(client?.products?.map(product => product.id) || []);
+    setServicesOpen(false);
     setNotes(client?.notes || '');
     setError(null);
   }, [client, currentUser.id, isOpen]);
@@ -49,6 +54,18 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
   const managerOptions = users.filter(user => user.role !== 'COLABORADOR' && (user.accountStatus !== 'INACTIVE' || user.id === client?.leadManagerId));
   const selectedManager = managerOptions.find(user => user.id === leadManagerId);
   const unavailableCurrentManager = Boolean(client?.leadManagerId && !selectedManager);
+  const availableProducts = [...products, ...(client?.products || [])]
+    .filter((product, index, all) => all.findIndex(candidate => candidate.id === product.id) === index)
+    .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, 'pt-BR'));
+  const selectedProducts = selectedProductIds
+    .map(id => availableProducts.find(product => product.id === id))
+    .filter((product): product is typeof availableProducts[number] => Boolean(product));
+
+  const toggleProduct = (product: typeof availableProducts[number]) => {
+    const selected = selectedProductIds.includes(product.id);
+    if (!product.active && !selected) return;
+    setSelectedProductIds(current => selected ? current.filter(id => id !== product.id) : [...current, product.id]);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,7 +95,7 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
         teamMembers: selectedManager ? [selectedManager.name] : (client?.teamMembers || []),
         statusRelationship: 'ATIVO',
         notes: notes.trim(),
-        monthlyServices: services.split(',').map(s => s.trim()).filter(Boolean)
+        products: selectedProducts
       };
       if (client && onUpdateClient) await onUpdateClient(client, payload);
       else if (onAddClient) await onAddClient(payload);
@@ -97,7 +114,7 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="fixed inset-0 bg-black/80 backdrop-blur-xs" onClick={onClose} />
 
-      <div className="relative w-full max-w-lg bg-[#121216] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
+      <div className="relative flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-[#121216] shadow-2xl animate-in zoom-in-95 duration-150">
         <div className="flex items-center justify-between p-4 border-b border-zinc-800 bg-[#15151a]">
           <div>
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
@@ -118,7 +135,7 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-3.5 text-xs">
+        <form onSubmit={handleSubmit} className="space-y-3.5 overflow-y-auto p-5 text-xs">
           <div>
             <label className="block text-[11px] font-semibold text-zinc-400 mb-1">
               Nome Fantasia do Cliente *
@@ -207,18 +224,44 @@ export const NewClientModal: React.FC<NewClientModalProps> = ({
               </select>
             </div>
 
-            <div>
+            <div className="min-w-0">
               <label className="block text-[11px] font-semibold text-zinc-400 mb-1 flex items-center gap-1">
                 <Tag size={12} className="text-zinc-500" />
-                Serviços Contratados (Tags)
+                Serviços contratados
               </label>
-              <input
-                type="text"
-                placeholder="Google Ads, Meta Ads, SEO"
-                value={services}
-                onChange={(e) => setServices(e.target.value)}
-                className="w-full bg-[#181820] border border-zinc-700 rounded-xl p-2 text-zinc-200 focus:outline-none focus:border-purple-500"
-              />
+              <button
+                type="button"
+                aria-expanded={servicesOpen}
+                onClick={() => setServicesOpen(open => !open)}
+                className="flex w-full items-center justify-between gap-2 rounded-xl border border-zinc-700 bg-[#181820] px-2.5 py-2 text-left text-zinc-300 outline-none hover:border-zinc-600 focus:border-purple-500"
+              >
+                <span>{selectedProductIds.length ? `${selectedProductIds.length} Produto${selectedProductIds.length === 1 ? '' : 's'}` : 'Selecionar Produtos'}</span>
+                <ChevronDown size={14} className={`shrink-0 transition-transform ${servicesOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {selectedProducts.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {selectedProducts.map(product => (
+                    <span key={product.id} className="inline-flex items-center gap-1">
+                      <ProductBadge label={`${product.name}${product.active ? '' : ' · inativo'}`} color={product.color} />
+                      <button type="button" onClick={() => toggleProduct(product)} aria-label={`Remover ${product.name}`} className="rounded p-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"><X size={11} /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {servicesOpen && (
+                <div className="mt-2 max-h-36 overflow-y-auto rounded-xl border border-zinc-700 bg-[#101014] p-1 shadow-xl">
+                  {availableProducts.filter(product => product.active || selectedProductIds.includes(product.id)).map(product => {
+                    const selected = selectedProductIds.includes(product.id);
+                    return (
+                      <button key={product.id} type="button" onClick={() => toggleProduct(product)} className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-zinc-800">
+                        <ProductBadge label={`${product.name}${product.active ? '' : ' · inativo'}`} color={product.color} />
+                        <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${selected ? 'border-purple-500 bg-purple-500 text-white' : 'border-zinc-600'}`}>{selected && <Check size={11} />}</span>
+                      </button>
+                    );
+                  })}
+                  {availableProducts.length === 0 && <p className="px-2 py-3 text-center text-[11px] text-zinc-500">Nenhum Produto ativo cadastrado.</p>}
+                </div>
+              )}
             </div>
           </div>
 

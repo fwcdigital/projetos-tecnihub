@@ -4,6 +4,8 @@ import { Client, Project, Task } from '../types';
 import { ViewMode, ViewModeSwitcher } from '../components/ViewModeSwitcher';
 import { StatusBadge } from '../components/StatusBadge';
 import { isProjectCompleted } from '../components/visualTokens';
+import { isContainerNavigationClick, isContainerNavigationKey } from '../components/containerNavigation';
+import { ProductBadge } from '../components/ProductBadge';
 
 interface ClientsViewProps {
   clients: Client[];
@@ -30,13 +32,21 @@ export const ClientsView: React.FC<ClientsViewProps> = ({ clients, projects, tas
     const accountStatus = client.accountStatus || 'ACTIVE';
     if (statusFilter !== 'ALL' && accountStatus !== statusFilter) return false;
     const term = searchTerm.trim().toLocaleLowerCase('pt-BR');
-    return !term || `${client.name} ${client.company} ${client.contactName} ${client.leadManagerName}`.toLocaleLowerCase('pt-BR').includes(term);
+    return !term || `${client.name} ${client.company} ${client.contactName} ${client.leadManagerName} ${(client.products || []).map(product => product.name).join(' ')}`.toLocaleLowerCase('pt-BR').includes(term);
   });
   const activeProjects = (client: Client) => projects.filter(project => project.clientId === client.id && !isProjectCompleted(project)).length;
   const openTasks = (client: Client) => tasks.filter(task => task.clientId === client.id && !task.statusCompleted).length;
   const statusBadge = (client: Client) => {
     const inactive = client.accountStatus === 'INACTIVE';
-    return <StatusBadge status={inactive ? 'PAUSADO' : client.statusRelationship} label={inactive ? 'Inativo' : statusLabels[client.statusRelationship]} size="sm" />;
+    return <span data-container-navigation="ignore"><StatusBadge status={inactive ? 'PAUSADO' : client.statusRelationship} label={inactive ? 'Inativo' : statusLabels[client.statusRelationship]} size="sm" /></span>;
+  };
+  const productChips = (client: Client) => {
+    const clientProducts = client.products || [];
+    if (!clientProducts.length) return <span className="text-[10px] text-zinc-600">Sem serviços</span>;
+    return <span className="flex min-w-0 items-center gap-1 overflow-hidden">
+      {clientProducts.slice(0, 2).map(product => <ProductBadge key={product.id} label={`${product.name}${product.active ? '' : ' · inativo'}`} color={product.color} />)}
+      {clientProducts.length > 2 && <span className="shrink-0 rounded-md border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-400">+{clientProducts.length - 2}</span>}
+    </span>;
   };
 
   return (
@@ -47,10 +57,11 @@ export const ClientsView: React.FC<ClientsViewProps> = ({ clients, projects, tas
 
       {viewMode === 'ROW' ? (
         <div className="space-y-1.5">{filteredClients.map(client => (
-          <article key={client.id} role="button" tabIndex={0} onClick={() => onSelectClient(client)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') onSelectClient(client); }} className={`grid cursor-pointer items-center gap-3 rounded-lg border border-zinc-800 bg-[#121216] px-3 py-2 transition-colors hover:border-zinc-700 hover:bg-[#16161c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 md:grid-cols-[minmax(220px,1.3fr)_minmax(180px,1fr)_minmax(150px,.8fr)_90px_90px_100px_32px] ${client.accountStatus === 'INACTIVE' ? 'opacity-70' : ''}`}>
+          <article key={client.id} role="link" tabIndex={0} aria-label={`Abrir cliente ${client.name}`} onClick={event => { if (isContainerNavigationClick(event)) onSelectClient(client); }} onKeyDown={event => { if (isContainerNavigationKey(event)) { event.preventDefault(); onSelectClient(client); } }} className={`grid cursor-pointer items-center gap-3 rounded-lg border border-zinc-800 bg-[#121216] px-3 py-2 transition-colors hover:border-zinc-700 hover:bg-[#16161c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 md:grid-cols-[minmax(210px,1.2fr)_minmax(170px,1fr)_minmax(135px,.75fr)_minmax(150px,.9fr)_80px_80px_95px_32px] ${client.accountStatus === 'INACTIVE' ? 'opacity-70' : ''}`}>
             <div className="flex min-w-0 items-center gap-2.5"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-purple-800/40 bg-purple-950/60 text-[10px] font-bold text-purple-300">{client.logo}</span><span className="min-w-0"><button type="button" onClick={event => { event.stopPropagation(); onSelectClient(client); }} className="block max-w-full truncate text-left text-xs font-bold text-zinc-100 hover:text-sky-300">{client.name}</button><span className="block truncate text-[10px] text-zinc-500">{client.company}</span></span></div>
             <div className="min-w-0 text-[10px] text-zinc-500"><span className="flex items-center gap-1 truncate text-zinc-300"><UserIcon size={10} />{client.contactName}</span><span className="mt-0.5 flex items-center gap-1 truncate"><Mail size={10} />{client.contactEmail}</span></div>
             <span className="flex min-w-0 items-center gap-1 truncate text-[10px] text-zinc-400"><UserIcon size={10} className="text-zinc-600" />{client.leadManagerName || 'Sem responsável'}</span>
+            {productChips(client)}
             <span className="text-[10px] text-zinc-400"><strong className="text-zinc-200">{activeProjects(client)}</strong> ativos</span>
             <span className="text-[10px] text-zinc-500"><strong className="text-zinc-300">{openTasks(client)}</strong> tarefas</span>
             {statusBadge(client)}
@@ -58,14 +69,15 @@ export const ClientsView: React.FC<ClientsViewProps> = ({ clients, projects, tas
           </article>
         ))}</div>
       ) : viewMode === 'TABLE' ? (
-        <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-[#111115]"><table className="w-full min-w-[780px] border-collapse text-left"><thead><tr className="border-b border-zinc-800 text-[9px] font-bold uppercase tracking-wider text-zinc-600"><th className="px-3 py-2">Cliente</th><th className="px-3 py-2">Contato</th><th className="px-3 py-2">Responsável</th><th className="px-3 py-2">Projetos ativos</th><th className="px-3 py-2">Tarefas abertas</th><th className="px-3 py-2">Status</th></tr></thead><tbody className="divide-y divide-zinc-800">{filteredClients.map(client => (
-          <tr key={client.id} tabIndex={0} onClick={() => onSelectClient(client)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') onSelectClient(client); }} className={`cursor-pointer text-[11px] text-zinc-400 hover:bg-zinc-900/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500/60 ${client.accountStatus === 'INACTIVE' ? 'opacity-70' : ''}`}><td className="px-3 py-2"><button type="button" onClick={event => { event.stopPropagation(); onSelectClient(client); }} className="flex max-w-52 items-center gap-1.5 truncate font-bold text-zinc-100 hover:text-sky-300"><Building2 size={11} />{client.name}</button><span className="block truncate text-[9px] text-zinc-600">{client.company}</span></td><td className="px-3 py-2"><span className="block text-zinc-300">{client.contactName}</span><span className="block text-[9px] text-zinc-600">{client.contactEmail}</span></td><td className="px-3 py-2">{client.leadManagerName || '—'}</td><td className="px-3 py-2 font-mono">{activeProjects(client)}</td><td className="px-3 py-2 font-mono">{openTasks(client)}</td><td className="px-3 py-2">{statusBadge(client)}</td></tr>
+        <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-[#111115]"><table className="w-full min-w-[900px] border-collapse text-left"><thead><tr className="border-b border-zinc-800 text-[9px] font-bold uppercase tracking-wider text-zinc-600"><th className="px-3 py-2">Cliente</th><th className="px-3 py-2">Contato</th><th className="px-3 py-2">Responsável</th><th className="px-3 py-2">Serviços</th><th className="px-3 py-2">Projetos ativos</th><th className="px-3 py-2">Tarefas abertas</th><th className="px-3 py-2">Status</th></tr></thead><tbody className="divide-y divide-zinc-800">{filteredClients.map(client => (
+          <tr key={client.id} role="link" tabIndex={0} aria-label={`Abrir cliente ${client.name}`} onClick={event => { if (isContainerNavigationClick(event)) onSelectClient(client); }} onKeyDown={event => { if (isContainerNavigationKey(event)) { event.preventDefault(); onSelectClient(client); } }} className={`cursor-pointer text-[11px] text-zinc-400 hover:bg-zinc-900/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500/60 ${client.accountStatus === 'INACTIVE' ? 'opacity-70' : ''}`}><td className="px-3 py-2"><button type="button" onClick={event => { event.stopPropagation(); onSelectClient(client); }} className="flex max-w-52 items-center gap-1.5 truncate font-bold text-zinc-100 hover:text-sky-300"><Building2 size={11} />{client.name}</button><span className="block truncate text-[9px] text-zinc-600">{client.company}</span></td><td className="px-3 py-2"><span className="block text-zinc-300">{client.contactName}</span><span className="block text-[9px] text-zinc-600">{client.contactEmail}</span></td><td className="px-3 py-2">{client.leadManagerName || '—'}</td><td className="max-w-60 px-3 py-2">{productChips(client)}</td><td className="px-3 py-2 font-mono">{activeProjects(client)}</td><td className="px-3 py-2 font-mono">{openTasks(client)}</td><td className="px-3 py-2">{statusBadge(client)}</td></tr>
         ))}</tbody></table></div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">{filteredClients.map(client => (
-          <article key={client.id} role="button" tabIndex={0} onClick={() => onSelectClient(client)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') onSelectClient(client); }} className={`group flex min-h-48 cursor-pointer flex-col rounded-xl border border-zinc-800 bg-[#121216] p-4 transition-colors hover:border-zinc-700 hover:bg-[#16161c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 ${client.accountStatus === 'INACTIVE' ? 'opacity-70' : ''}`}>
+          <article key={client.id} role="link" tabIndex={0} aria-label={`Abrir cliente ${client.name}`} onClick={event => { if (isContainerNavigationClick(event)) onSelectClient(client); }} onKeyDown={event => { if (isContainerNavigationKey(event)) { event.preventDefault(); onSelectClient(client); } }} className={`group flex min-h-48 cursor-pointer flex-col rounded-xl border border-zinc-800 bg-[#121216] p-4 transition-colors hover:border-zinc-700 hover:bg-[#16161c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60 ${client.accountStatus === 'INACTIVE' ? 'opacity-70' : ''}`}>
             <div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-purple-800/40 bg-purple-950/60 text-xs font-bold text-purple-300">{client.logo}</span><span className="min-w-0"><button type="button" onClick={event => { event.stopPropagation(); onSelectClient(client); }} className="block max-w-full truncate text-left text-sm font-bold text-zinc-100 hover:text-sky-300">{client.name}</button><span className="block truncate text-[10px] text-zinc-500">{client.company}</span></span></div>{statusBadge(client)}</div>
             <div className="mt-4 space-y-2 border-t border-zinc-800 pt-3 text-[11px]"><span className="flex min-w-0 items-center gap-2 text-zinc-300"><UserIcon size={12} className="shrink-0 text-zinc-600" /><span className="truncate">{client.contactName}</span></span><span className="flex min-w-0 items-center gap-2 text-zinc-500"><Mail size={12} className="shrink-0 text-zinc-600" /><span className="truncate">{client.contactEmail}</span></span><span className="flex min-w-0 items-center gap-2 text-zinc-400"><UserIcon size={12} className="shrink-0 text-zinc-600" /><span className="truncate">{client.leadManagerName || 'Sem responsável'}</span></span></div>
+            <div className="mt-3">{productChips(client)}</div>
             <div className="mt-auto flex items-end justify-between gap-3 pt-4"><div className="flex gap-4 text-[10px] text-zinc-500"><span><strong className="block font-mono text-sm text-zinc-200">{activeProjects(client)}</strong>projetos ativos</span><span><strong className="block font-mono text-sm text-zinc-200">{openTasks(client)}</strong>tarefas abertas</span></div><button type="button" onClick={event => { event.stopPropagation(); onSelectClient(client); }} className="rounded-lg border border-zinc-700 p-2 text-zinc-500 transition-colors hover:border-zinc-600 hover:bg-zinc-800 hover:text-zinc-100" title="Abrir cliente"><ArrowRight size={14} /></button></div>
           </article>
         ))}</div>

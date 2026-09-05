@@ -6,21 +6,25 @@ import { TaskRow } from './TaskRow';
 interface CompletedTasksSectionProps {
   tasks: Task[];
   onSelectTask: (task: Task) => void;
+  onSelectProject?: (project: Project) => void;
   onToggleComplete: (taskId: string, event: React.MouseEvent) => void;
   onUpdateTask?: (task: Task) => void;
   contextKey?: string;
   projects?: Project[];
   taskLayout?: 'DEFAULT' | 'STACKED';
+  containerNavigationTarget?: 'PROJECT' | 'TASK';
 }
 
 export const CompletedTasksSection: React.FC<CompletedTasksSectionProps> = ({
   tasks,
   onSelectTask,
+  onSelectProject,
   onToggleComplete,
   onUpdateTask,
   contextKey,
   projects = [],
-  taskLayout = 'DEFAULT'
+  taskLayout = 'DEFAULT',
+  containerNavigationTarget = 'PROJECT'
 }) => {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -54,10 +58,12 @@ export const CompletedTasksSection: React.FC<CompletedTasksSectionProps> = ({
               key={task.id}
               task={task}
               onSelectTask={onSelectTask}
+              onSelectProject={onSelectProject}
               onToggleComplete={onToggleComplete}
               onUpdateTask={onUpdateTask}
               projects={projects}
               layout={taskLayout}
+              containerNavigationTarget={containerNavigationTarget}
             />
           ))}
         </div>

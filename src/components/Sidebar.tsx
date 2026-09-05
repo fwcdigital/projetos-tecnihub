@@ -3,10 +3,10 @@ import {
   LayoutDashboard, 
   CheckSquare, 
   FolderKanban, 
+  Bell,
   Building2, 
   Users, 
   CalendarDays, 
-  Repeat, 
   BarChart3, 
   Settings, 
   User as UserIcon, 
@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 import { TecnihubLogo } from './TecnihubLogo';
 import { User, NavView } from '../types';
-import { useAuth } from '../context/AuthContext';
 import { UserAvatar } from './UserAvatar';
 export type { NavView } from '../types';
 
@@ -30,6 +29,7 @@ interface SidebarProps {
   overdueCount: number;
   todayCount: number;
   projectsCount: number;
+  unreadNotificationsCount: number;
   clientsCount: number;
   isMobileOpen?: boolean;
   onCloseMobile?: () => void;
@@ -45,11 +45,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   overdueCount,
   todayCount,
   projectsCount,
+  unreadNotificationsCount,
   clientsCount,
   isMobileOpen = false,
   onCloseMobile,
 }) => {
-  const { logout } = useAuth();
   const mainNavItems = [
     {
       id: 'DASHBOARD' as NavView,
@@ -83,6 +83,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ),
     },
     {
+      id: 'NOTIFICACOES' as NavView,
+      label: 'Notificações',
+      icon: Bell,
+      badge: unreadNotificationsCount > 0 ? (
+        <span className="min-w-5 rounded-full border border-sky-500/30 bg-sky-500/15 px-1.5 py-0.5 text-center text-[10px] font-bold text-sky-300">
+          {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+        </span>
+      ) : null,
+    },
+    {
       id: 'CLIENTES' as NavView,
       label: 'Clientes',
       icon: Building2,
@@ -103,16 +113,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Calendário',
       icon: CalendarDays,
       badge: null,
-    },
-    {
-      id: 'RECORRENCIAS' as NavView,
-      label: 'Rotinas',
-      icon: Repeat,
-      badge: (
-        <span className="px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-medium">
-          Regras
-        </span>
-      ),
     },
     {
       id: 'RELATORIOS' as NavView,
@@ -167,12 +167,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Top Brand Header */}
         <div className="flex-1 overflow-y-auto">
           <div className="flex items-center justify-between px-3.5 py-4 border-b border-[#1e1e24]/80">
-            <div 
-              onClick={logout}
-              className="cursor-pointer overflow-hidden transition-opacity hover:opacity-90 min-h-[36px] flex items-center"
+            <button
+              type="button"
+              onClick={() => handleItemClick('DASHBOARD')}
+              className="overflow-hidden transition-opacity hover:opacity-90 min-h-[36px] flex items-center text-left"
+              aria-label="Ir para o Dashboard"
             >
               <TecnihubLogo collapsed={collapsed} size="sm" />
-            </div>
+            </button>
             
             {/* Desktop Collapse Button */}
             <button

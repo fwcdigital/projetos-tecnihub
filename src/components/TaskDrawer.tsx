@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Task, TaskStatus, Priority, Subtask, User, RecurrenceFrequency, Project } from '../types';
 import { 
   X, 
@@ -23,7 +23,9 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
-  Tag
+  Tag,
+  Pencil,
+  Reply
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { AssigneePicker } from './AssigneePicker';
@@ -34,7 +36,95 @@ import { DateTimePicker } from './DateTimePicker';
 import { taskService } from '../services/taskService';
 import { InlineEditableField } from './InlineEditableField';
 import { TaskChecklist } from './TaskChecklist';
-import { canManageTaskAssignments } from '../permissions';
+import { canManageTaskAssignments, isAdministrator } from '../permissions';
+
+interface CommentComposerProps {
+  mentionableUsers: User[];
+  initialText?: string;
+  initialMentionIds?: string[];
+  placeholder: string;
+  submitLabel: string;
+  onSubmit: (content: string, mentionUserIds: string[]) => Promise<void>;
+  onCancel?: () => void;
+  autoFocus?: boolean;
+}
+
+const CommentComposer: React.FC<CommentComposerProps> = ({
+  mentionableUsers,
+  initialText = '',
+  initialMentionIds = [],
+  placeholder,
+  submitLabel,
+  onSubmit,
+  onCancel,
+  autoFocus = false
+}) => {
+  const [text, setText] = useState(initialText);
+  const [selectedMentionIds, setSelectedMentionIds] = useState(initialMentionIds);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionStart, setMentionStart] = useState(-1);
+  const [submitting, setSubmitting] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const changeText = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = event.target.value;
+    const cursor = event.target.selectionStart;
+    const match = value.slice(0, cursor).match(/@([^@\s]*)$/);
+    setText(value);
+    setMentionQuery(match ? match[1] : null);
+    setMentionStart(match ? cursor - match[0].length : -1);
+  };
+
+  const selectMention = (user: User) => {
+    const cursor = inputRef.current?.selectionStart ?? text.length;
+    const before = text.slice(0, mentionStart);
+    const after = text.slice(cursor);
+    const inserted = `@${user.name} `;
+    setText(`${before}${inserted}${after}`);
+    setSelectedMentionIds(previous => previous.includes(user.id) ? previous : [...previous, user.id]);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      const nextCursor = before.length + inserted.length;
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
+  };
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const content = text.trim();
+    if (!content || submitting) return;
+    const mentionUserIds = selectedMentionIds.filter(id => {
+      const user = mentionableUsers.find(candidate => candidate.id === id);
+      return user && content.toLocaleLowerCase('pt-BR').includes(`@${user.name}`.toLocaleLowerCase('pt-BR'));
+    });
+    setSubmitting(true);
+    try {
+      await onSubmit(content, mentionUserIds);
+      setText('');
+      setSelectedMentionIds([]);
+      setMentionQuery(null);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const filteredUsers = mentionQuery === null ? [] : mentionableUsers
+    .filter(user => user.name.toLocaleLowerCase('pt-BR').includes(mentionQuery.toLocaleLowerCase('pt-BR')))
+    .slice(0, 8);
+
+  return <form onSubmit={submit} className="relative space-y-2">
+    <textarea ref={inputRef} autoFocus={autoFocus} value={text} onChange={changeText} onKeyDown={event => { if (event.key === 'Escape') setMentionQuery(null); }} placeholder={placeholder} rows={2} className="w-full resize-none rounded-xl border border-zinc-800 bg-[#15151b] p-3 text-xs text-zinc-200 focus:border-zinc-600 focus:outline-none" />
+    {mentionQuery !== null && <div className="absolute bottom-11 left-0 z-20 max-h-52 w-full max-w-sm overflow-y-auto rounded-xl border border-zinc-700 bg-[#111116] p-1.5 shadow-2xl">
+      {filteredUsers.map(user => <button key={user.id} type="button" onMouseDown={event => event.preventDefault()} onClick={() => selectMention(user)} className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-zinc-800"><UserAvatar name={user.name} src={user.avatar} className="h-7 w-7" /><span className="min-w-0"><span className="block truncate text-xs font-semibold text-zinc-200">{user.name}</span><span className="block truncate text-[10px] text-zinc-500">{user.position || user.roleTitle}</span></span></button>)}
+      {!filteredUsers.length && <div className="px-3 py-4 text-center text-xs text-zinc-500">Nenhum usuário disponível neste contexto.</div>}
+    </div>}
+    <div className="flex justify-end gap-2">
+      {onCancel && <button type="button" disabled={submitting} onClick={onCancel} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200">Cancelar</button>}
+      <button type="submit" disabled={submitting || !text.trim()} className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"><Send size={12} />{submitting ? 'Salvando...' : submitLabel}</button>
+    </div>
+  </form>;
+};
 
 interface TaskDrawerProps {
   task: Task | null;
@@ -45,6 +135,9 @@ interface TaskDrawerProps {
   currentUser: User;
   users?: User[];
   projects?: Project[];
+  initialTab?: 'DETAILS' | 'SUBTASKS' | 'CHECKLIST' | 'COMMENTS' | 'FILES' | 'HISTORY';
+  focusCommentId?: string | null;
+  tabRequestKey?: number;
 }
 
 export const TaskDrawer: React.FC<TaskDrawerProps> = ({
@@ -55,7 +148,10 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
   onDeleteTask,
   currentUser,
   users,
-  projects
+  projects,
+  initialTab = 'DETAILS',
+  focusCommentId,
+  tabRequestKey = 0
 }) => {
   if (!isOpen || !task) return null;
 
@@ -66,7 +162,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
     : (users || []).filter(user => user.accountStatus !== 'INACTIVE' && projectMemberIds.has(user.id));
   const canAssignPeople = canManageTaskAssignments(currentUser.role);
 
-  const [activeTab, setActiveTab] = useState<'DETAILS' | 'SUBTASKS' | 'CHECKLIST' | 'COMMENTS' | 'FILES' | 'HISTORY'>('DETAILS');
+  const [activeTab, setActiveTab] = useState<'DETAILS' | 'SUBTASKS' | 'CHECKLIST' | 'COMMENTS' | 'FILES' | 'HISTORY'>(initialTab);
   
   // Subtask Form State
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
@@ -79,7 +175,10 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
   const [showSubtaskFormOptions, setShowSubtaskFormOptions] = useState(false);
   const [subtaskTabFilter, setSubtaskTabFilter] = useState<'ALL' | 'RECURRING_ONLY'>('ALL');
 
-  const [newCommentText, setNewCommentText] = useState('');
+  const [mentionableUsers, setMentionableUsers] = useState<User[]>([]);
+  const [commentAction, setCommentAction] = useState<{ type: 'REPLY' | 'EDIT'; commentId: string } | null>(null);
+  const [deleteCommentId, setDeleteCommentId] = useState<string | null>(null);
+  const [commentDeleting, setCommentDeleting] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [actionError, setActionError] = useState('');
 
@@ -88,6 +187,24 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
   const completedWorkflowStatus = getCompletedWorkflowStatus(task.workflowStatuses);
   const openWorkflowStatus = getOpenWorkflowStatus(task.workflowStatuses);
   const recurringSubtasksCount = task.subtasks.filter(s => s.isRecurring).length;
+  const visibleCommentCount = task.commentCount ?? task.comments.filter(comment => !comment.deletedAt).length;
+
+  useEffect(() => {
+    let active = true;
+    taskService.getMentionableUsers(task.id)
+      .then(result => { if (active) setMentionableUsers(result); })
+      .catch(() => { if (active) setMentionableUsers([]); });
+    return () => { active = false; };
+  }, [task.id]);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+    if (initialTab !== 'COMMENTS' || !focusCommentId) return;
+    const timeout = window.setTimeout(() => {
+      document.querySelector(`[data-comment-id="${focusCommentId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 150);
+    return () => window.clearTimeout(timeout);
+  }, [focusCommentId, initialTab, tabRequestKey, task.id]);
 
   // Toggle Subtask
   const handleToggleSubtask = async (subtaskId: string) => {
@@ -151,17 +268,59 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
     } catch (error: any) { setActionError(error.message || 'Não foi possível criar a subtarefa.'); }
   };
 
-  // Add Comment
-  const handleAddComment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCommentText.trim()) return;
-
+  const persistComment = async (content: string, mentionUserIds: string[], parentCommentId?: string) => {
     try {
       setActionError('');
-      const updated = await taskService.addComment(task.id, newCommentText.trim());
+      const updated = await taskService.addComment(task.id, content, mentionUserIds, parentCommentId);
       onUpdateTask(updated);
-      setNewCommentText('');
-    } catch (error: any) { setActionError(error.message || 'Não foi possível adicionar o comentário.'); }
+      setCommentAction(null);
+    } catch (error: any) {
+      setActionError(error.message || 'Não foi possível adicionar o comentário.');
+      throw error;
+    }
+  };
+
+  const persistCommentEdit = async (commentId: string, content: string, mentionUserIds: string[]) => {
+    try {
+      setActionError('');
+      const updated = await taskService.updateComment(task.id, commentId, content, mentionUserIds);
+      onUpdateTask(updated);
+      setCommentAction(null);
+    } catch (error: any) {
+      setActionError(error.message || 'Não foi possível editar o comentário.');
+      throw error;
+    }
+  };
+
+  const confirmCommentDeletion = async () => {
+    if (!deleteCommentId) return;
+    setCommentDeleting(true);
+    try {
+      setActionError('');
+      const updated = await taskService.deleteComment(task.id, deleteCommentId);
+      onUpdateTask(updated);
+      setDeleteCommentId(null);
+      if (commentAction?.commentId === deleteCommentId) setCommentAction(null);
+    } catch (error: any) {
+      setActionError(error.message || 'Não foi possível excluir o comentário.');
+    } finally {
+      setCommentDeleting(false);
+    }
+  };
+
+  const renderCommentContent = (comment: Task['comments'][number]) => {
+    const mentions = [...(comment.mentions || [])].sort((left, right) => left.start - right.start);
+    if (!mentions.length) return comment.content;
+    const parts: React.ReactNode[] = [];
+    let cursor = 0;
+    for (const mention of mentions) {
+      if (mention.start < cursor || mention.start > comment.content.length) continue;
+      parts.push(comment.content.slice(cursor, mention.start));
+      parts.push(<span key={`${comment.id}-${mention.userId}`} className="rounded bg-sky-500/10 px-0.5 font-semibold text-sky-300">@{mention.userName}</span>);
+      cursor = Math.min(mention.end, comment.content.length);
+    }
+    parts.push(comment.content.slice(cursor));
+    return parts;
   };
 
   // Change Status
@@ -360,7 +519,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
             >
               Comentários
               <span className="px-1.5 py-0.2 rounded-full bg-zinc-700 text-[10px]">
-                {task.comments.length}
+                {visibleCommentCount}
               </span>
             </button>
             <button
@@ -699,38 +858,35 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
           {/* TAB 4: COMMENTS */}
           {activeTab === 'COMMENTS' && (
             <div className="space-y-4">
-              <form onSubmit={handleAddComment} className="space-y-2">
-                <textarea
-                  value={newCommentText}
-                  onChange={(e) => setNewCommentText(e.target.value)}
-                  placeholder="Escreva um comentário ou atualização interna..."
-                  rows={2}
-                  className="w-full bg-[#15151b] border border-zinc-800 rounded-xl p-3 text-xs text-zinc-200 focus:outline-none focus:border-zinc-600 resize-none"
-                />
-                <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold"
-                  >
-                    <Send size={12} />
-                    Comentar
-                  </button>
-                </div>
-              </form>
+              <CommentComposer mentionableUsers={mentionableUsers} placeholder="Escreva um comentário ou use @ para mencionar..." submitLabel="Comentar" onSubmit={(content, mentionIds) => persistComment(content, mentionIds)} />
 
               <div className="space-y-3 pt-2">
-                {task.comments.map((comm) => (
-                  <div key={comm.id} className="p-3 rounded-xl bg-[#16161c] border border-zinc-800 space-y-1 text-xs">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <UserAvatar name={comm.userName} src={comm.userAvatar} className="h-5 w-5" />
-                        <span className="font-semibold text-zinc-200">{comm.userName}</span>
+                {task.comments.filter(comment => !comment.parentCommentId).map(rootComment => {
+                  const replies = task.comments.filter(comment => comment.parentCommentId === rootComment.id).sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+                  const renderComment = (comment: Task['comments'][number], replyLevel: boolean) => {
+                    const withinEditWindow = Date.now() <= new Date(comment.createdAt).getTime() + 5 * 60_000;
+                    const ownComment = comment.userId === currentUser.id;
+                    const hasReplies = task.comments.some(candidate => candidate.parentCommentId === comment.id);
+                    const canEdit = !comment.deletedAt && ownComment && withinEditWindow && !hasReplies;
+                    const canDelete = !comment.deletedAt && (isAdministrator(currentUser.role) || (ownComment && withinEditWindow && !hasReplies));
+                    const edited = !comment.deletedAt && Boolean(comment.updatedAt && new Date(comment.updatedAt).getTime() > new Date(comment.createdAt).getTime() + 1000);
+                    return <div key={comment.id} data-comment-id={comment.id} className={`${replyLevel ? 'ml-5 border-l border-zinc-700/70 pl-3' : ''}`}>
+                      <div className={`space-y-1 rounded-xl border p-3 text-xs ${replyLevel ? 'bg-[#131319]' : 'bg-[#16161c]'} ${focusCommentId === comment.id ? 'border-sky-500/50 ring-1 ring-sky-500/20' : 'border-zinc-800'}`}>
+                        <div className="flex items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-2"><UserAvatar name={comment.userName} src={comment.userAvatar} className="h-5 w-5" /><span className="truncate font-semibold text-zinc-200">{comment.userName}</span></div><span className="shrink-0 text-[10px] text-zinc-500">{comment.createdAt}</span></div>
+                        <p className={`whitespace-pre-wrap pl-7 ${comment.deletedAt ? 'italic text-zinc-600' : 'text-zinc-300'}`}>{comment.deletedAt ? (replyLevel ? 'Resposta excluída' : 'Comentário excluído') : renderCommentContent(comment)}</p>
+                        {!comment.deletedAt && <div className="flex items-center gap-3 pl-7 pt-1 text-[10px] text-zinc-500">
+                          <button type="button" onClick={() => setCommentAction({ type: 'REPLY', commentId: comment.id })} className="inline-flex items-center gap-1 hover:text-sky-300"><Reply size={10} />Responder</button>
+                          {canEdit && <button type="button" onClick={() => setCommentAction({ type: 'EDIT', commentId: comment.id })} className="inline-flex items-center gap-1 hover:text-zinc-200"><Pencil size={10} />Editar</button>}
+                          {canDelete && <button type="button" onClick={() => setDeleteCommentId(comment.id)} className="inline-flex items-center gap-1 hover:text-rose-300"><Trash2 size={10} />Excluir</button>}
+                          {edited && <span className="italic text-zinc-600">editado</span>}
+                        </div>}
                       </div>
-                      <span className="text-[10px] text-zinc-500">{comm.createdAt}</span>
-                    </div>
-                    <p className="text-zinc-300 pl-7">{comm.content}</p>
-                  </div>
-                ))}
+                      {commentAction?.commentId === comment.id && <div className="ml-5 mt-2 border-l border-sky-900/60 pl-3"><p className="mb-1.5 text-[10px] text-zinc-500">{commentAction.type === 'REPLY' ? `Respondendo a ${comment.userName}` : 'Editando comentário'}</p><CommentComposer key={`${commentAction.type}-${comment.id}`} autoFocus mentionableUsers={mentionableUsers} initialText={commentAction.type === 'EDIT' ? comment.content : ''} initialMentionIds={commentAction.type === 'EDIT' ? (comment.mentions || []).map(mention => mention.userId) : []} placeholder={commentAction.type === 'REPLY' ? 'Escreva uma resposta...' : 'Edite seu comentário...'} submitLabel={commentAction.type === 'REPLY' ? 'Enviar' : 'Salvar'} onCancel={() => setCommentAction(null)} onSubmit={(content, mentionIds) => commentAction.type === 'REPLY' ? persistComment(content, mentionIds, comment.id) : persistCommentEdit(comment.id, content, mentionIds)} /></div>}
+                    </div>;
+                  };
+                  return <div key={rootComment.id} className="space-y-2">{renderComment(rootComment, false)}{replies.map(reply => renderComment(reply, true))}</div>;
+                })}
+                {!task.comments.length && <p className="py-4 text-center text-xs text-zinc-600">Nenhum comentário nesta tarefa.</p>}
               </div>
             </div>
           )}
@@ -791,6 +947,7 @@ export const TaskDrawer: React.FC<TaskDrawerProps> = ({
           </button>
         </div>
       </div>
+      {deleteCommentId && <div className="fixed inset-0 z-[80] flex items-center justify-center p-4"><div className="absolute inset-0 bg-black/75" onClick={() => !commentDeleting && setDeleteCommentId(null)} /><div role="alertdialog" aria-modal="true" aria-labelledby="delete-comment-title" className="relative w-full max-w-sm rounded-2xl border border-zinc-700 bg-[#15151a] p-4 shadow-2xl"><h2 id="delete-comment-title" className="text-sm font-bold text-zinc-100">Excluir este comentário?</h2><p className="mt-1 text-xs text-zinc-500">O conteúdo será removido, preservando a integridade da conversa.</p><div className="mt-4 flex justify-end gap-2"><button type="button" disabled={commentDeleting} onClick={() => setDeleteCommentId(null)} className="rounded-lg bg-zinc-800 px-3 py-2 text-xs font-semibold text-zinc-300 hover:bg-zinc-700">Cancelar</button><button type="button" disabled={commentDeleting} onClick={() => void confirmCommentDeletion()} className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-bold text-white hover:bg-rose-500 disabled:opacity-50">{commentDeleting ? 'Excluindo...' : 'Excluir'}</button></div></div></div>}
     </>
   );
 };

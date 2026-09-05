@@ -7,6 +7,7 @@ export interface ProjectFilter {
   type?: string;
   search?: string;
   operationalView?: OperationalViewMode;
+  accountStatus?: 'ACTIVE' | 'INACTIVE' | 'ALL';
 }
 
 const priorityMapToFrontend: Record<string, Priority> = {
@@ -64,6 +65,7 @@ function formatProjectFromBackend(p: any): Project {
       tasksCount: Number(status.tasksCount ?? status.tasks_count ?? 0)
     })),
     isRecurring: Boolean(p.is_recurring ?? p.isRecurring),
+    accountStatus: p.account_status || p.accountStatus || 'ACTIVE',
     description: p.description || '',
     briefing: p.briefing && typeof p.briefing === 'object' ? p.briefing : {},
     resources: Array.isArray(p.resources) ? p.resources : [],
@@ -88,6 +90,7 @@ export const projectService = {
       params.append('search', filter.search);
     }
     if (filter?.operationalView) params.append('operationalView', filter.operationalView);
+    if (filter?.accountStatus) params.append('accountStatus', filter.accountStatus);
 
     const query = params.toString() ? `?${params.toString()}` : '';
     const res = await api.get<{ projects: any[] }>(`/api/projects${query}`);
@@ -114,7 +117,9 @@ export const projectService = {
       progress: data.progress || 0,
       is_recurring: data.isRecurring || false,
       briefing: data.briefing || {},
-      team_user_ids: teamUserIds
+      team_user_ids: teamUserIds,
+      apply_task_template: data.applyTaskTemplate !== false,
+      creation_request_id: data.creationRequestId
     };
 
     const res = await api.post<{ project: any }>('/api/projects', payload);
@@ -178,5 +183,14 @@ export const projectService = {
 
   deleteResource: async (projectId: string, resourceId: string): Promise<void> => {
     await api.delete(`/api/projects/${projectId}/resources/${resourceId}`);
+  },
+
+  setAccountStatus: async (id: string, status: 'ACTIVE' | 'INACTIVE'): Promise<Project> => {
+    const response = await api.patch<{ project: any }>(`/api/projects/${id}/account-status`, { status });
+    return formatProjectFromBackend(response.project);
+  },
+
+  deletePermanent: async (id: string, confirmationName: string): Promise<void> => {
+    await api.delete(`/api/projects/${id}/permanent`, { data: { confirmationName } });
   }
 };

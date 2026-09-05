@@ -38,6 +38,19 @@ test('migrations criam o núcleo e tarefas no PostgreSQL com integridade e RLS',
        VALUES ($1, 'Cliente', 'Cliente Ltda', $2)`,
       [clientId, managerId]
     );
+    await database.query('INSERT INTO client_products (client_id, product_id) VALUES ($1, $2)', [clientId, 'SITE']);
+    assert.deepEqual(
+      (await database.query<{ product_id: string }>('SELECT product_id FROM client_products WHERE client_id = $1', [clientId])).rows.map(row => row.product_id),
+      ['SITE']
+    );
+    await assert.rejects(
+      database.query('INSERT INTO client_products (client_id, product_id) VALUES ($1, $2)', [clientId, 'SITE']),
+      /duplicate key|unique constraint/i
+    );
+    await assert.rejects(
+      database.query('INSERT INTO client_products (client_id, product_id) VALUES ($1, $2)', [clientId, 'PRODUTO_INEXISTENTE']),
+      /foreign key/i
+    );
     await database.query(
       `INSERT INTO projects (id, client_id, name, manager_id, created_by)
        VALUES ($1, $2, 'Projeto', $3, $3)`,
@@ -87,7 +100,7 @@ test('migrations criam o núcleo e tarefas no PostgreSQL com integridade e RLS',
     );
     assert.deepEqual(
       tables.rows.map(row => row.table_name),
-      ['checklist_items', 'clients', 'deleted_client_snapshots', 'product_statuses', 'products', 'project_members', 'project_resources', 'project_statuses', 'projects', 'recurrence_rules', 'schema_migrations', 'task_assignees', 'task_comments', 'tasks', 'users']
+      ['checklist_items', 'client_products', 'clients', 'comment_mentions', 'deleted_client_snapshots', 'deleted_project_snapshots', 'notifications', 'product_statuses', 'product_task_template_items', 'product_task_templates', 'products', 'project_members', 'project_resources', 'project_statuses', 'projects', 'recurrence_rules', 'schema_migrations', 'task_assignees', 'task_comments', 'tasks', 'users']
     );
 
     const products = await database.query<{ id: string; name: string; position: number }>(
@@ -106,6 +119,23 @@ test('migrations criam o núcleo e tarefas no PostgreSQL com integridade e RLS',
       Object.fromEntries(productStatusCounts.rows.map(row => [row.product_id, Number(row.total)])),
       { SITE: 10, LANDING_PAGE: 10, ECOMMERCE: 12, PAID_TRAFFIC: 9, SEO: 8, MAINTENANCE: 7, INTERNAL: 6, OTHER: 7 }
     );
+    const templateCounts = await database.query<{ product_id: string; total: number }>(
+      `SELECT template.product_id, COUNT(item.id)::integer AS total
+       FROM product_task_templates template
+       LEFT JOIN product_task_template_items item ON item.template_id = template.id
+       GROUP BY template.product_id`
+    );
+    assert.deepEqual(
+      Object.fromEntries(templateCounts.rows.map(row => [row.product_id, Number(row.total)])),
+      { SITE: 13, LANDING_PAGE: 13, ECOMMERCE: 18, PAID_TRAFFIC: 15, SEO: 13, MAINTENANCE: 7, INTERNAL: 8, OTHER: 8 }
+    );
+    const configuredTemplateDefaults = await database.query<{ non_normal: number; configured_statuses: number }>(
+      `SELECT COUNT(*) FILTER (WHERE priority <> 'NORMAL')::integer AS non_normal,
+              COUNT(status_id)::integer AS configured_statuses
+       FROM product_task_template_items`
+    );
+    assert.equal(Number(configuredTemplateDefaults.rows[0].non_normal), 0);
+    assert.equal(Number(configuredTemplateDefaults.rows[0].configured_statuses), 0);
 
     const mappedProject = await database.query<{ product_id: string }>('SELECT product_id FROM projects WHERE id = $1', [projectId]);
     assert.equal(mappedProject.rows[0].product_id, 'SITE');
@@ -130,6 +160,12 @@ test('migrations criam o núcleo e tarefas no PostgreSQL com integridade e RLS',
        WHERE table_name = 'tasks' AND column_name IN ('start_date', 'start_time', 'due_date', 'due_time')`
     );
     assert.deepEqual(new Set(taskColumns.rows.map(row => row.column_name)), new Set(['start_date', 'start_time', 'due_date', 'due_time']));
+
+    const commentColumns = await database.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name = 'task_comments' AND column_name IN ('parent_comment_id', 'updated_at', 'deleted_at', 'deleted_by')`
+    );
+    assert.deepEqual(new Set(commentColumns.rows.map(row => row.column_name)), new Set(['parent_comment_id', 'updated_at', 'deleted_at', 'deleted_by']));
 
     const legacyTaskId = '30000000-0000-4000-8000-000000000001';
     await database.query(
@@ -157,9 +193,9 @@ test('migrations criam o núcleo e tarefas no PostgreSQL com integridade e RLS',
     const rls = await database.query<{ relname: string; relrowsecurity: boolean }>(
       `SELECT relname, relrowsecurity
        FROM pg_class
-       WHERE relname IN ('users', 'clients', 'deleted_client_snapshots', 'products', 'product_statuses', 'projects', 'project_members', 'project_statuses', 'tasks', 'task_assignees', 'task_comments', 'checklist_items', 'project_resources', 'recurrence_rules')`
+       WHERE relname IN ('users', 'clients', 'client_products', 'comment_mentions', 'deleted_client_snapshots', 'deleted_project_snapshots', 'notifications', 'products', 'product_statuses', 'product_task_templates', 'product_task_template_items', 'projects', 'project_members', 'project_statuses', 'tasks', 'task_assignees', 'task_comments', 'checklist_items', 'project_resources', 'recurrence_rules')`
     );
-    assert.equal(rls.rows.length, 14);
+    assert.equal(rls.rows.length, 20);
     assert.ok(rls.rows.every(row => row.relrowsecurity));
   } finally {
     await database.close();

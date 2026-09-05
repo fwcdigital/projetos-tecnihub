@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { User, UserRole } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { Shield, ShieldAlert, UserCheck, Briefcase, ChevronDown, LogOut } from 'lucide-react';
@@ -6,10 +6,12 @@ import { UserAvatar } from './UserAvatar';
 
 interface UserRoleSwitcherProps {
   currentUser: User;
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  onOpenProfile: () => void;
 }
 
-export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser }) => {
-  const [isOpen, setIsOpen] = useState(false);
+export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser, isOpen, onOpenChange, onOpenProfile }) => {
   const { logout } = useAuth();
 
   const getRoleIcon = (role: UserRole) => {
@@ -41,7 +43,7 @@ export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser 
   return (
     <div className="relative">
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => onOpenChange(!isOpen)}
         className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 transition-all text-xs text-left"
         title="Gerenciar sessão"
       >
@@ -59,8 +61,6 @@ export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser 
       </button>
 
       {isOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
           <div className="absolute right-0 mt-1.5 w-72 rounded-xl bg-[#121215] border border-zinc-800 shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-100">
             <div className="px-2 py-1.5 mb-1 border-b border-zinc-800/80">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
@@ -68,19 +68,19 @@ export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser 
               </span>
             </div>
 
-            <div className="flex items-center gap-2.5 rounded-lg bg-zinc-800/70 p-2">
+            <button type="button" onClick={() => { onOpenChange(false); onOpenProfile(); }} className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg bg-zinc-800/70 p-2 text-left transition-colors hover:bg-zinc-700/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60" aria-label="Editar meu perfil">
               <UserAvatar name={currentUser.name} src={currentUser.avatar} className="h-7 w-7" />
               <div className="min-w-0 flex-1">
                 <span className="block truncate text-xs font-semibold text-zinc-100">{currentUser.name}</span>
                 <span className="block truncate text-[10px] text-zinc-400">{currentUser.email}</span>
               </div>
-            </div>
+            </button>
 
             {/* Logout Action */}
             <div className="pt-2 mt-2 border-t border-zinc-800/80">
               <button
                 onClick={() => {
-                  setIsOpen(false);
+                  onOpenChange(false);
                   logout();
                 }}
                 className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 text-xs font-medium transition-colors"
@@ -90,7 +90,6 @@ export const UserRoleSwitcher: React.FC<UserRoleSwitcherProps> = ({ currentUser 
               </button>
             </div>
           </div>
-        </>
       )}
     </div>
   );

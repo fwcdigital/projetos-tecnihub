@@ -1,5 +1,5 @@
 import { api } from './api';
-import type { ProductDefinition, ProductStatusDefinition } from '../types';
+import type { Priority, ProductDefinition, ProductStatusDefinition, ProductTaskTemplateItem } from '../types';
 
 function normalizeProduct(product: any): ProductDefinition {
   return {
@@ -9,7 +9,19 @@ function normalizeProduct(product: any): ProductDefinition {
     position: Number(product.position),
     active: Boolean(product.active),
     projectsCount: Number(product.projectsCount ?? product.projects_count ?? 0),
-    statusesCount: Number(product.statusesCount ?? product.statuses_count ?? 0)
+    statusesCount: Number(product.statusesCount ?? product.statuses_count ?? 0),
+    templateTasksCount: Number(product.templateTasksCount ?? product.template_tasks_count ?? 0)
+  };
+}
+
+function normalizeTemplateItem(item: any): ProductTaskTemplateItem {
+  return {
+    id: item.id,
+    productId: item.productId ?? item.product_id,
+    title: item.title,
+    statusId: item.statusId ?? item.status_id ?? undefined,
+    priority: item.priority as Priority,
+    position: Number(item.position)
   };
 }
 
@@ -78,11 +90,36 @@ export const productService = {
     return response.statuses.map(normalizeStatus);
   },
 
+  getTaskTemplate: async (productId: string): Promise<ProductTaskTemplateItem[]> => {
+    const response = await api.get<{ items: any[] }>(`/api/products/${productId}/task-template`);
+    return response.items.map(normalizeTemplateItem);
+  },
+
+  createTemplateTask: async (productId: string, data: { title: string; statusId?: string; priority: Priority }): Promise<ProductTaskTemplateItem> => {
+    const response = await api.post<{ item: any }>(`/api/products/${productId}/task-template`, data);
+    return normalizeTemplateItem(response.item);
+  },
+
+  updateTemplateTask: async (productId: string, itemId: string, updates: { title?: string; statusId?: string | null; priority?: Priority }): Promise<ProductTaskTemplateItem> => {
+    const response = await api.put<{ item: any }>(`/api/products/${productId}/task-template/${itemId}`, updates);
+    return normalizeTemplateItem(response.item);
+  },
+
+  deleteTemplateTask: (productId: string, itemId: string): Promise<{ removed: boolean }> => (
+    api.delete(`/api/products/${productId}/task-template/${itemId}`)
+  ),
+
+  reorderTemplateTasks: async (productId: string, ids: string[]): Promise<ProductTaskTemplateItem[]> => {
+    const response = await api.put<{ items: any[] }>(`/api/products/${productId}/task-template/reorder`, { ids });
+    return response.items.map(normalizeTemplateItem);
+  },
+
   getCatalog: async (): Promise<ProductDefinition[]> => {
     const products = await productService.getAll(false);
     return Promise.all(products.map(async product => ({
       ...product,
-      statuses: await productService.getStatuses(product.id, false)
+      statuses: await productService.getStatuses(product.id, false),
+      templateTasks: await productService.getTaskTemplate(product.id)
     })));
   }
 };

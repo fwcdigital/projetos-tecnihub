@@ -126,17 +126,70 @@ taskRouter.get('/:id', authenticateToken, async (req: AuthRequest, res: Response
   }
 });
 
+taskRouter.get('/:id/mentionable-users', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const task = isUuid(req.params.id) ? await taskRepository.findById(req.params.id, req.user) : null;
+    if (!task) return res.status(404).json({ error: 'Tarefa não encontrada.' });
+    const users = await taskCommentRepository.findMentionableUsers(task.id);
+    return res.json({ success: true, users });
+  } catch {
+    return res.status(500).json({ error: 'Erro interno ao buscar usuários disponíveis para menção.' });
+  }
+});
+
 taskRouter.post('/:id/comments', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const task = isUuid(req.params.id) ? await taskRepository.findById(req.params.id, req.user) : null;
     if (!task) return res.status(404).json({ error: 'Tarefa não encontrada.' });
     const content = String(req.body.content || '').trim();
+    const mentionUserIds: string[] = Array.isArray(req.body.mentionUserIds) ? Array.from(new Set<string>(req.body.mentionUserIds.map(String))) : [];
+    const parentCommentId = req.body.parentCommentId ? String(req.body.parentCommentId) : null;
     if (!content) return res.status(400).json({ error: 'O comentário não pode ficar vazio.' });
     if (content.length > 5000) return res.status(400).json({ error: 'O comentário excede o limite de 5.000 caracteres.' });
-    await taskCommentRepository.create(task.id, req.user!.id, content);
+    if (mentionUserIds.some(id => !isUuid(id))) return res.status(400).json({ error: 'Menção inválida.' });
+    if (parentCommentId && !isUuid(parentCommentId)) return res.status(400).json({ error: 'Comentário de origem inválido.' });
+    await taskCommentRepository.createWithNotifications(task.id, req.user!.id, content, mentionUserIds, parentCommentId);
     return res.status(201).json({ success: true, task: await taskRepository.findById(task.id, req.user) });
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === 'INVALID_MENTION') return res.status(400).json({ error: 'Uma ou mais menções não são válidas para esta tarefa.' });
+    if (error instanceof Error && error.message === 'INVALID_PARENT_COMMENT') return res.status(400).json({ error: 'Não é possível responder a este comentário.' });
     return res.status(500).json({ error: 'Erro interno ao adicionar comentário.' });
+  }
+});
+
+taskRouter.put('/:id/comments/:commentId', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!isUuid(req.params.id) || !isUuid(req.params.commentId)) return res.status(404).json({ error: 'Comentário não encontrado.' });
+    const task = await taskRepository.findById(req.params.id, req.user);
+    if (!task) return res.status(404).json({ error: 'Tarefa não encontrada.' });
+    const content = String(req.body.content || '').trim();
+    const mentionUserIds: string[] = Array.isArray(req.body.mentionUserIds) ? Array.from(new Set<string>(req.body.mentionUserIds.map(String))) : [];
+    if (!content) return res.status(400).json({ error: 'O comentário não pode ficar vazio.' });
+    if (content.length > 5000) return res.status(400).json({ error: 'O comentário excede o limite de 5.000 caracteres.' });
+    if (mentionUserIds.some(id => !isUuid(id))) return res.status(400).json({ error: 'Menção inválida.' });
+    await taskCommentRepository.updateWithMentions(task.id, req.params.commentId, req.user!, content, mentionUserIds);
+    return res.json({ success: true, task: await taskRepository.findById(task.id, req.user) });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'COMMENT_NOT_FOUND') return res.status(404).json({ error: 'Comentário não encontrado.' });
+    if (error instanceof Error && error.message === 'INVALID_MENTION') return res.status(400).json({ error: 'Uma ou mais menções não são válidas para esta tarefa.' });
+    if (error instanceof Error && error.message === 'COMMENT_EDIT_FORBIDDEN') return res.status(403).json({ error: 'Você só pode editar seus próprios comentários.' });
+    if (error instanceof Error && ['COMMENT_DELETED', 'COMMENT_EDIT_WINDOW_EXPIRED'].includes(error.message)) return res.status(403).json({ error: 'Este comentário não pode mais ser editado.' });
+    return res.status(500).json({ error: 'Erro interno ao editar comentário.' });
+  }
+});
+
+taskRouter.delete('/:id/comments/:commentId', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!isUuid(req.params.id) || !isUuid(req.params.commentId)) return res.status(404).json({ error: 'Comentário não encontrado.' });
+    const task = await taskRepository.findById(req.params.id, req.user);
+    if (!task) return res.status(404).json({ error: 'Tarefa não encontrada.' });
+    await taskCommentRepository.softDelete(task.id, req.params.commentId, req.user!);
+    return res.json({ success: true, task: await taskRepository.findById(task.id, req.user) });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'COMMENT_NOT_FOUND') return res.status(404).json({ error: 'Comentário não encontrado.' });
+    if (error instanceof Error && error.message === 'COMMENT_DELETE_FORBIDDEN') return res.status(403).json({ error: 'Você só pode excluir seus próprios comentários.' });
+    if (error instanceof Error && error.message === 'COMMENT_DELETE_WINDOW_EXPIRED') return res.status(403).json({ error: 'Este comentário não pode mais ser excluído.' });
+    return res.status(500).json({ error: 'Erro interno ao excluir comentário.' });
   }
 });
 
